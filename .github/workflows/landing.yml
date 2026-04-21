@@ -1,0 +1,55 @@
+name: deploy-landing
+
+# Publica a landing estática no VPS toda vez que algo em landing/ muda no main.
+# Bem rápido (~20s): rsync + correção de ownership. Não precisa build.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'landing/**'
+      - '.github/workflows/landing.yml'
+  workflow_dispatch:  # disparo manual também
+
+concurrency:
+  group: deploy-landing
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Trust VPS host key
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Rsync landing → /var/www/boracall/site
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          rsync -avz --delete \
+            --exclude='.DS_Store' \
+            landing/ "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/site/"
+
+      - name: Fix ownership + verify
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "chown -R www-data:www-data /var/www/boracall/site"
+          # Smoke: landing responde e a versão nova tá servida
+          curl -sI "https://boracall.com/?ci=$GITHUB_SHA" | head -3
+          TITLE=$(curl -s "https://boracall.com/?ci=$GITHUB_SHA" | grep -oE '<title>[^<]+</title>' | head -1)
+          echo "served title: $TITLE"
