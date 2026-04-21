@@ -5,7 +5,7 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, Utc};
-use rand::{distributions::Alphanumeric, Rng};
+use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use validator::Validate;
@@ -59,13 +59,13 @@ pub struct JoinRoomReq {
 // ---------------------------------------------------------------------------
 
 fn random_slug() -> String {
-    // 10 chars URL-safe — ~60 bits of entropy, plenty for collision avoidance.
-    rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(10)
-        .map(char::from)
-        .collect::<String>()
-        .to_lowercase()
+    // 5 chars, lowercase, sem chars ambíguos (0/o, 1/l/i). ~24 bits — com
+    // UNIQUE constraint + retry no create, colisões reais são tratadas.
+    const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
+    let mut rng = rand::thread_rng();
+    (0..5)
+        .map(|_| *ALPHABET.choose(&mut rng).unwrap() as char)
+        .collect()
 }
 
 // ---------------------------------------------------------------------------

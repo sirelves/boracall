@@ -119,7 +119,7 @@ function App() {
 
   // --- Join via pasted link: resolve slug and go to invite preview ------
   const onPasteLink = useCallback(async (link) => {
-    // Accept "https://boracall.app/s/<slug>" or "/s/<slug>" or just "<slug>".
+    // Accept "https://boracall.com/s/<slug>" or "/s/<slug>" or just "<slug>".
     const m = /(?:\/s\/|^)([a-z0-9-]{3,})$/i.exec((link || "").trim());
     const slug = m ? m[1] : link;
     try {

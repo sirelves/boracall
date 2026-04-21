@@ -92,11 +92,6 @@ function Signup({ go, setSession }) {
         <div className="sub">{T.signup_sub}</div>
       </div>
       <div className="auth-body">
-        <button className="google-btn" onClick={() => { setErr("Login com Google ainda não está plugado. Usa e-mail/senha."); }}>
-          <GoogleG size={16} />
-          {T.google}
-        </button>
-        <div className="or-divider">{T.or}</div>
         <label className="label">{T.email}</label>
         <input className="input" placeholder={T.email_ph} value={email} onChange={(e)=>setEmail(e.target.value)} />
         <label className="label">{T.password}</label>
@@ -150,11 +145,6 @@ function Login({ go, setSession }) {
         <div className="sub">{T.login_sub}</div>
       </div>
       <div className="auth-body">
-        <button className="google-btn" onClick={()=>{ setErr("Login com Google ainda não está plugado. Usa e-mail/senha."); }}>
-          <GoogleG size={16} />
-          {T.google}
-        </button>
-        <div className="or-divider">{T.or}</div>
         <label className="label">{T.email}</label>
         <input className="input" placeholder={T.email_ph} value={email} onChange={(e)=>setEmail(e.target.value)} />
         <label className="label">{T.password}</label>
@@ -197,14 +187,43 @@ function OTP({ go, session }) {
   const [code, setCode] = useS1(["","","","","",""]);
   const [secs, setSecs] = useS1(28);
   const [err, setErr] = useS1("");
+  const [sending, setSending] = useS1(false);
   const refs = useR1([]);
-  useE1(() => { const iv = setInterval(() => setSecs(s => Math.max(0, s-1)), 1000); return () => clearInterval(iv); }, []);
+  const sentRef = useR1(false);
+
+  useE1(() => {
+    const iv = setInterval(() => setSecs(s => Math.max(0, s-1)), 1000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // Dispara o e-mail de OTP uma única vez ao entrar na tela.
+  useE1(() => {
+    if (sentRef.current) return;
+    if (!window.api.getToken()) return;  // sem token não dá pra pedir (endpoint é autenticado)
+    sentRef.current = true;
+    setSending(true);
+    window.api.requestOtp()
+      .catch(e => setErr(prettyApiErr(e)))
+      .finally(() => setSending(false));
+  }, []);
 
   const submit = async (codeStr) => {
     try {
       await window.api.verifyOtp(codeStr);
       go("onboarding");
     } catch (e) { setErr(prettyApiErr(e)); }
+  };
+
+  const resend = async () => {
+    if (sending || secs > 0) return;
+    setErr(""); setSending(true);
+    try {
+      await window.api.requestOtp();
+      setCode(["","","","","",""]);
+      setSecs(28);
+      refs.current[0]?.focus();
+    } catch (e) { setErr(prettyApiErr(e)); }
+    finally { setSending(false); }
   };
 
   const set = (i, v) => {
@@ -240,10 +259,11 @@ function OTP({ go, session }) {
           ))}
         </div>
         <div className="otp-resend mono">
-          {secs > 0 ? `${T.otp_resend} ${secs}s` : <a className="dim" onClick={()=>setSecs(28)} style={{cursor:"pointer",borderBottom:"1px solid var(--line)"}}>{T.otp_resend_now}</a>}
-        </div>
-        <div className="dim mono" style={{fontSize:10,textAlign:"center",marginTop:-4}}>
-          dev: qualquer código 6 dígitos valida (OTP stub)
+          {sending
+            ? "enviando..."
+            : secs > 0
+              ? `${T.otp_resend} ${secs}s`
+              : <a className="dim" onClick={resend} style={{cursor:"pointer",borderBottom:"1px solid var(--line)"}}>{T.otp_resend_now}</a>}
         </div>
         {err && <div className="form-error mono">{err}</div>}
         <button className="btn-ghost" style={{alignSelf:"center"}} onClick={()=>go("signup")}>{T.otp_wrong}</button>

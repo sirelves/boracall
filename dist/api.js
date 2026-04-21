@@ -92,6 +92,10 @@
     return r;
   }
 
+  async function requestOtp() {
+    return request("/api/auth/request-otp", { method: "POST" });
+  }
+
   async function verifyOtp(code) {
     const u = await request("/api/auth/verify-otp", {
       method: "POST", body: { code },
@@ -169,7 +173,7 @@
     request,
     ApiError,
     // auth
-    signup, login, verifyOtp, me, updateMe, logout,
+    signup, login, requestOtp, verifyOtp, me, updateMe, logout,
     getToken, getUser, setToken, setUser,
     // rooms
     listRooms, createRoom, getRoom, joinRoom,
