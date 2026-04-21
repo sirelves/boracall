@@ -432,7 +432,7 @@ function Call({ go, activeRoom, session, tweaks, onEnd }) {
           <div className="brand-row">
             <Mark size={14} />
             <span className="bn"><b>bora</b>call</span>
-            <span className="room-crumb"><span className="slash">/</span>{activeRoom?.slug || "eng-weekly"}<span className="slash">·</span><span className="mono">{mm}:{ss}</span></span>
+            <span className="room-crumb"><span className="slash">/</span>{activeRoom?.slug || "—"}<span className="slash">·</span><span className="mono">{mm}:{ss}</span></span>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <CopyButton text={`${window.BC_PUBLIC_URL || "https://boracall.com"}/s/${activeRoom?.slug}`} label="convite" done="link copiado!" />
@@ -489,15 +489,15 @@ function Call({ go, activeRoom, session, tweaks, onEnd }) {
 function PostCall({ go, activeRoom, callStats, onRate }) {
   const T = STRINGS.pt;
   const [rate, setRate] = useS2(null);
-  const d = callStats || { duration: 1834, peakUsers: 14, avgPing: 46, avgLoss: 0.4 };
-  const speakers = (d.speakers && d.speakers.length) ? d.speakers : defaultSpeakers();
+  const d = callStats || { duration: 0, peakUsers: 1, avgPing: 0, avgLoss: 0 };
+  const speakers = (d.speakers && d.speakers.length) ? d.speakers : [];
   const mm = Math.floor(d.duration/60); const ss = d.duration%60;
   return (
     <div className="post">
       <div className="post-head">
         <div>
           <h2>{T.post_title}</h2>
-          <div className="dim" style={{marginTop:4}}>{activeRoom?.name || "eng-weekly"}</div>
+          <div className="dim" style={{marginTop:4}}>{activeRoom?.name || "—"}</div>
         </div>
         <div className="when mono">há alguns segundos</div>
       </div>
@@ -542,15 +542,6 @@ function PostCall({ go, activeRoom, callStats, onRate }) {
     </div>
   );
 }
-function defaultSpeakers() {
-  return [
-    { name: "Você", pct: 72, talkedSec: 612 },
-    { name: "Maria Clara", pct: 58, talkedSec: 488 },
-    { name: "João Pedro", pct: 41, talkedSec: 348 },
-    { name: "Lucas Ferreira", pct: 18, talkedSec: 152 },
-  ];
-}
-
 // ---------- Settings ----------
 function Settings({ go, session, setSession, tweaks, setTweak }) {
   const T = STRINGS.pt;
@@ -568,7 +559,7 @@ function Settings({ go, session, setSession, tweaks, setTweak }) {
         <button className="btn-ghost" onClick={()=>go("dashboard")}>← voltar</button>
       </div>
       <div className="set-tabs">
-        {[["profile",T.tab_profile],["audio",T.tab_audio],["shortcuts",T.tab_shortcuts],["account",T.tab_account]].map(([k,l])=>(
+        {[["profile",T.tab_profile],["audio",T.tab_audio],["shortcuts",T.tab_shortcuts],["preferences","preferências"],["account",T.tab_account]].map(([k,l])=>(
           <button key={k} className={`set-tab ${tab===k?"on":""}`} onClick={()=>setTab(k)}>{l}</button>
         ))}
       </div>
@@ -626,6 +617,9 @@ function Settings({ go, session, setSession, tweaks, setTweak }) {
             <ShortcutRow k="?" d="Mostrar atalhos" />
             <ShortcutRow k="CMD + K" d="Buscar sala ou pessoa" />
           </>
+        )}
+        {tab === "preferences" && (
+          <TweaksPanel tweaks={tweaks} setTweak={setTweak} />
         )}
         {tab === "account" && (
           <>

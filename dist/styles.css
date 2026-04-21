@@ -1,6 +1,10 @@
 /* BoraCall — design tokens + shared primitives */
 :root {
-  --accent: oklch(0.82 0.17 75);
+  /* Color */
+  --accent: oklch(0.84 0.17 78);                  /* âmbar um tico mais quente */
+  --accent-bright: oklch(0.92 0.17 82);
+  --accent-dim: oklch(0.68 0.14 75);
+  --accent-bg: oklch(0.26 0.08 75);
   --accent-ink: oklch(0.15 0.01 260);
   --bg: oklch(0.14 0.005 260);
   --bg-2: oklch(0.175 0.005 260);
@@ -15,9 +19,34 @@
   --good: oklch(0.78 0.15 145);
   --mid: oklch(0.82 0.16 85);
   --bad: oklch(0.68 0.17 25);
+  /* Type */
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --sans: "Inter", system-ui, -apple-system, Helvetica, Arial, sans-serif;
+  --fs-xs: 10px;
+  --fs-sm: 12px;
+  --fs-md: 14px;
+  --fs-lg: 17px;
+  --fs-xl: 22px;
+  --fs-2xl: 28px;
+  /* Layout */
   --radius: 2px;
+  --radius-md: 4px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  /* Motion */
+  --motion-fast: 120ms;
+  --motion-med:  180ms;
+  --motion-slow: 280ms;
+  --ease: cubic-bezier(.2,.8,.2,1);
+  /* Elevation */
+  --shadow-1: 0 1px 2px rgba(0,0,0,.3);
+  --shadow-2: 0 4px 14px rgba(0,0,0,.35);
+  --shadow-3: 0 10px 30px rgba(0,0,0,.45);
 }
 :root[data-theme="light"] {
   --bg: oklch(0.985 0.002 260);
@@ -46,12 +75,43 @@ body {
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
 }
-button { font-family: inherit; }
+button { font-family: inherit; transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease); }
+button:active { transform: translateY(1px); }
+input { transition: border-color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease); }
+a { transition: color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease); }
 
 .mono { font-family: var(--mono); font-size: 12px; letter-spacing: 0.01em; }
 .up   { text-transform: uppercase; letter-spacing: 0.08em; }
 .dim  { color: var(--fg-dim); }
 .mute { color: var(--fg-mute); }
+
+/* ========== Skeleton (loading) ========== */
+@keyframes bc-skel-pulse {
+  0%, 100% { opacity: .35; }
+  50%      { opacity: .75; }
+}
+.skel {
+  display: inline-block;
+  background: var(--bg-3);
+  border-radius: var(--radius);
+  animation: bc-skel-pulse 1.3s ease-in-out infinite;
+}
+.skel-line { height: 12px; width: 100%; }
+.skel-card { height: 104px; width: 100%; }
+
+/* ========== Live indicator (dot pulsante) ========== */
+@keyframes bc-live-pulse {
+  0%   { box-shadow: 0 0 0 0 var(--good); }
+  70%  { box-shadow: 0 0 0 6px color-mix(in oklch, var(--good) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--good) 0%, transparent); }
+}
+.live-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  background: var(--good);
+  border-radius: 50%;
+  animation: bc-live-pulse 1.6s ease-in-out infinite;
+}
 
 /* ========== Shell / router frame ========== */
 .shell {
@@ -233,6 +293,20 @@ button { font-family: inherit; }
 .pill .dot { width: 6px; height: 6px; background: var(--accent); display: inline-block; border-radius: 999px; }
 
 /* Tweaks fab */
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  background: var(--accent-bg, #2a2010);
+  border-bottom: 1px solid var(--accent, #f5b947);
+  color: var(--fg);
+  font-size: 13px;
+  z-index: 40;
+}
+.update-banner .btn-primary { padding: 6px 12px; font-size: 12px; }
+.update-banner .btn-ghost   { padding: 6px 10px; font-size: 12px; }
 .tweaks-fab {
   position: fixed;
   right: 12px;
@@ -252,6 +326,13 @@ button { font-family: inherit; }
 .tweaks {
   position: fixed; right: 12px; bottom: 48px;
   width: 300px; background: var(--bg); border: 1px solid var(--line); z-index: 50;
+}
+/* Embedded inside Settings → sem flutuação, sem largura fixa. */
+.tweaks-embed {
+  position: static;
+  width: 100%;
+  border: 0;
+  padding: 0;
 }
 .tw-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); color: var(--fg-dim); }
 .x { appearance: none; background: transparent; color: var(--fg-dim); border: 0; font-size: 20px; line-height: 1; cursor: pointer; padding: 0 4px; }

@@ -43,6 +43,22 @@ pub struct VerifyOtpReq {
 }
 
 #[derive(Debug, Deserialize, Validate)]
+pub struct RequestPasswordResetReq {
+    #[validate(email)]
+    pub email: String,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct ResetPasswordReq {
+    #[validate(email)]
+    pub email: String,
+    #[validate(length(min = 4))]
+    pub code: String,
+    #[validate(length(min = 8, max = 128))]
+    pub new_password: String,
+}
+
+#[derive(Debug, Deserialize, Validate)]
 pub struct UpdateMeReq {
     #[validate(length(min = 1, max = 64))]
     pub display_name: Option<String>,
@@ -183,6 +199,72 @@ pub async fn verify_otp(
         email: row.email,
         display_name: row.display_name,
         email_verified: row.email_verified,
+    }))
+}
+
+/// Step 1 do reset: valida email, gera código 8-dígitos (TTL 30min) e envia por e-mail.
+/// Sempre retorna sucesso — não revela se o e-mail existe (evita enumeração).
+pub async fn request_password_reset(
+    State(state): State<AppState>,
+    Json(body): Json<RequestPasswordResetReq>,
+) -> AppResult<Json<serde_json::Value>> {
+    body.validate()?;
+    let email = body.email.trim().to_lowercase();
+
+    let exists = sqlx::query_scalar!(
+        r#"SELECT 1 AS "e!" FROM users WHERE email = $1"#,
+        email
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .is_some();
+
+    if exists {
+        let code = state.otp.issue_reset(&email);
+        if let Err(e) = state.mailer.send_password_reset(&email, &code).await {
+            tracing::error!(%email, error = %e, "failed to send password reset email");
+        }
+    } else {
+        tracing::info!(%email, "password reset requested for non-existent account (silent ok)");
+    }
+    Ok(Json(serde_json::json!({ "sent": true })))
+}
+
+/// Step 2 do reset: consome o código, atualiza a senha e retorna um JWT novo
+/// (loga o user automaticamente na nova sessão).
+pub async fn reset_password(
+    State(state): State<AppState>,
+    Json(body): Json<ResetPasswordReq>,
+) -> AppResult<Json<AuthResp>> {
+    body.validate()?;
+    let email = body.email.trim().to_lowercase();
+
+    if !state.otp.verify_reset(&email, &body.code) {
+        return Err(AppError::Unauthorized("código inválido ou expirado".into()));
+    }
+
+    let hash = hash_password(&body.new_password)?;
+    let row = sqlx::query!(
+        r#"
+        UPDATE users SET password_hash = $1 WHERE email = $2
+        RETURNING id, email::text as "email!", display_name, email_verified
+        "#,
+        hash,
+        email,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::Unauthorized("código inválido ou expirado".into()))?;
+
+    let token = issue_token(&state, &row.id, &row.email)?;
+    Ok(Json(AuthResp {
+        token,
+        user: MeResp {
+            id: row.id,
+            email: row.email,
+            display_name: row.display_name,
+            email_verified: row.email_verified,
+        },
     }))
 }
 

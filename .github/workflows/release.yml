@@ -113,6 +113,9 @@ jobs:
         uses: nick-fields/retry@v3
         env:
           TARGET: ${{ matrix.target }}
+          # Assinatura do updater. Chave privada vem do GH secret (base64 ed25519).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           timeout_minutes: 25
           max_attempts: 2
@@ -126,6 +129,8 @@ jobs:
             fi
 
       # Coleta tudo que esse runner produziu num diretório uniforme pra upload.
+      # Inclui instaladores (.dmg/.msi/.exe/.AppImage/.deb/.rpm) + artefatos do
+      # updater (.app.tar.gz, .AppImage.tar.gz, .nsis.zip/.msi.zip) + .sig de cada.
       - name: Collect artifacts
         shell: bash
         env:
@@ -138,12 +143,22 @@ jobs:
             BUNDLE_ROOT="target/$TARGET/release/bundle"
           fi
           echo "Collecting from $BUNDLE_ROOT"
+          # Instaladores
           cp "$BUNDLE_ROOT"/dmg/*.dmg           dist-release/ 2>/dev/null || true
           cp "$BUNDLE_ROOT"/msi/*.msi           dist-release/ 2>/dev/null || true
           cp "$BUNDLE_ROOT"/nsis/*.exe          dist-release/ 2>/dev/null || true
           cp "$BUNDLE_ROOT"/appimage/*.AppImage dist-release/ 2>/dev/null || true
           cp "$BUNDLE_ROOT"/deb/*.deb           dist-release/ 2>/dev/null || true
           cp "$BUNDLE_ROOT"/rpm/*.rpm           dist-release/ 2>/dev/null || true
+          # Updater bundles + signatures (tauri gera ao lado dos instaladores)
+          cp "$BUNDLE_ROOT"/macos/*.app.tar.gz      dist-release/ 2>/dev/null || true
+          cp "$BUNDLE_ROOT"/macos/*.app.tar.gz.sig  dist-release/ 2>/dev/null || true
+          cp "$BUNDLE_ROOT"/msi/*.msi.zip           dist-release/ 2>/dev/null || true
+          cp "$BUNDLE_ROOT"/msi/*.msi.zip.sig       dist-release/ 2>/dev/null || true
+          cp "$BUNDLE_ROOT"/nsis/*.nsis.zip         dist-release/ 2>/dev/null || true
+          cp "$BUNDLE_ROOT"/nsis/*.nsis.zip.sig     dist-release/ 2>/dev/null || true
+          cp "$BUNDLE_ROOT"/appimage/*.AppImage.tar.gz     dist-release/ 2>/dev/null || true
+          cp "$BUNDLE_ROOT"/appimage/*.AppImage.tar.gz.sig dist-release/ 2>/dev/null || true
           echo "== artifacts for ${{ matrix.name }} =="
           ls -lah dist-release/ || true
 
@@ -242,6 +257,76 @@ jobs:
           ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd /var/www/boracall/downloads && \
             sha256sum BoraCall*.dmg *.exe *.msi *.AppImage *.deb *.rpm 2>/dev/null > SHA256SUMS && \
             chown www-data:www-data SHA256SUMS && cat SHA256SUMS"
+
+      # Gera latest.json pro tauri-plugin-updater. Lê os .sig dos artifacts,
+      # embute no JSON e uploada pro VPS. Os bundles .app.tar.gz / .AppImage.tar.gz
+      # / .nsis.zip já foram uploadados pelos jobs de build.
+      - name: Build & upload latest.json
+        if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          VERSION: ${{ github.ref_name || format('v{0}', github.event.inputs.version) }}
+        run: |
+          set -e
+          VER="${VERSION#v}"
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          DOWNLOADS="https://boracall.com/downloads"
+
+          find_one() {
+            find "$1" -type f -name "$2" 2>/dev/null | head -1
+          }
+          platform_json() {
+            local file="$1" sig="$2"
+            if [ -z "$file" ] || [ ! -f "$file" ] || [ ! -f "$sig" ]; then
+              echo "null"
+              return
+            fi
+            jq -n \
+              --arg url "$DOWNLOADS/$(basename "$file")" \
+              --rawfile signature "$sig" \
+              '{url: $url, signature: ($signature | rtrimstr("\n"))}'
+          }
+
+          DARWIN_ARM=$(platform_json \
+            "$(find_one artifacts/boracall-macos-arm64 '*.app.tar.gz')" \
+            "$(find_one artifacts/boracall-macos-arm64 '*.app.tar.gz.sig')")
+          DARWIN_X86=$(platform_json \
+            "$(find_one artifacts/boracall-macos-intel '*.app.tar.gz')" \
+            "$(find_one artifacts/boracall-macos-intel '*.app.tar.gz.sig')")
+          LINUX_X86=$(platform_json \
+            "$(find_one artifacts/boracall-linux '*.AppImage.tar.gz')" \
+            "$(find_one artifacts/boracall-linux '*.AppImage.tar.gz.sig')")
+          WIN_X86=$(platform_json \
+            "$(find_one artifacts/boracall-windows '*.nsis.zip')" \
+            "$(find_one artifacts/boracall-windows '*.nsis.zip.sig')")
+
+          jq -n \
+            --arg version "$VER" \
+            --arg pub_date "$PUB_DATE" \
+            --argjson darwin_arm "$DARWIN_ARM" \
+            --argjson darwin_x86 "$DARWIN_X86" \
+            --argjson linux_x86 "$LINUX_X86" \
+            --argjson win_x86 "$WIN_X86" \
+            '{
+              version: $version,
+              notes: "BoraCall \($version)",
+              pub_date: $pub_date,
+              platforms: (
+                {}
+                + (if $darwin_arm != null then {"darwin-aarch64": $darwin_arm} else {} end)
+                + (if $darwin_x86 != null then {"darwin-x86_64":  $darwin_x86} else {} end)
+                + (if $linux_x86  != null then {"linux-x86_64":   $linux_x86}  else {} end)
+                + (if $win_x86    != null then {"windows-x86_64": $win_x86}    else {} end)
+              )
+            }' > out/latest.json
+          echo "== latest.json =="
+          cat out/latest.json
+
+          scp -o StrictHostKeyChecking=no out/latest.json \
+            "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/latest.json"
+          ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" \
+            "chown www-data:www-data /var/www/boracall/downloads/latest.json"
 
       # --- GitHub Release ---
       - name: Criar/atualizar GitHub Release (draft)

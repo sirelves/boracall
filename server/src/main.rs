@@ -65,6 +65,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/login", post(handlers::auth::login))
         .route("/auth/request-otp", post(handlers::auth::request_otp))
         .route("/auth/verify-otp", post(handlers::auth::verify_otp))
+        .route("/auth/request-password-reset", post(handlers::auth::request_password_reset))
+        .route("/auth/reset-password", post(handlers::auth::reset_password))
         .route("/auth/me", get(handlers::auth::me))
         .route("/auth/me", patch(handlers::auth::update_me))
         // rooms

@@ -191,11 +191,7 @@ function TweaksPanel({ tweaks, setTweak, onClose }) {
     </div>
   );
   return (
-    <div className="tweaks">
-      <div className="tw-head">
-        <span className="mono up">Tweaks</span>
-        <button className="x" onClick={onClose} aria-label="close">×</button>
-      </div>
+    <div className="tweaks tweaks-embed">
       <Row label="Tema">
         <Seg value={tweaks.theme} options={[{v:"dark",l:"escuro"},{v:"light",l:"claro"}]} onChange={(v)=>setTweak("theme",v)} />
       </Row>

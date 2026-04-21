@@ -30,6 +30,9 @@ function App() {
   const [callStart, setCallStart] = useState(null);
   const [invitePreview, setInvitePreview] = useState(null);
   const [bootDone, setBootDone] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState(null);  // { version, current_version, notes }
+  const [updateState, setUpdateState] = useState("idle"); // idle | installing | error
+  const [updateErr, setUpdateErr] = useState("");
   const mountedRef = useRef(false);
 
   useEffect(() => { document.documentElement.setAttribute("data-theme", tweaks.theme); document.documentElement.setAttribute("data-accent", tweaks.accent); persist("bc_tweaks", tweaks); }, [tweaks]);
@@ -42,6 +45,33 @@ function App() {
       window.desktop.window.setInvisibleMode(!!tweaks.invisible).catch(() => {});
     }
   }, [tweaks.invisible]);
+
+  // Check for updates 5s após o boot — não bloqueia a tela inicial.
+  useEffect(() => {
+    if (!window.desktop || !window.desktop.isNative) return;
+    const timer = setTimeout(async () => {
+      try {
+        const info = await window.desktop.updater.check();
+        if (info && info.available) setUpdateInfo(info);
+      } catch (e) {
+        // Silencioso: endpoint 404, offline, etc. Retry na próxima abertura.
+        console.warn("updater: check falhou", e);
+      }
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const installUpdate = useCallback(async () => {
+    if (updateState === "installing") return;
+    setUpdateState("installing"); setUpdateErr("");
+    try {
+      await window.desktop.updater.install();
+      // Se chegou aqui sem reiniciar, algo estranho — mas o app deveria ter feito restart.
+    } catch (e) {
+      setUpdateState("error");
+      setUpdateErr(e.message || String(e));
+    }
+  }, [updateState]);
 
   // --- Boot: revalidate token, load rooms -------------------------------
   useEffect(() => {
@@ -65,7 +95,7 @@ function App() {
         }
       } else {
         // No token — route through auth.
-        if (!["landing","signup","login"].includes(route)) setRoute("landing");
+        if (!["landing","signup","login","forgot-password","reset-password"].includes(route)) setRoute("landing");
       }
       setBootDone(true);
     })();
@@ -73,12 +103,15 @@ function App() {
   }, []);
 
   // Refresh rooms when entering dashboard.
+  const [roomsLoading, setRoomsLoading] = useState(false);
   const refreshRooms = useCallback(async () => {
     if (!window.api || !window.api.getToken()) return;
+    setRoomsLoading(true);
     try {
       const list = await window.api.listRooms();
       setRooms(list);
     } catch (e) { /* stay silent; dashboard will show empty */ }
+    finally { setRoomsLoading(false); }
   }, []);
   useEffect(() => {
     if (route === "dashboard" || route === "create" || route === "join") refreshRooms();
@@ -182,7 +215,8 @@ function App() {
 
   const screen = <Router
     route={route} go={go} session={session} setSession={setSession}
-    rooms={rooms} activeRoom={activeRoom} setActiveRoom={setActiveRoom}
+    rooms={rooms} roomsLoading={roomsLoading}
+    activeRoom={activeRoom} setActiveRoom={setActiveRoom}
     onCreate={onCreate} onPasteLink={onPasteLink} onEnd={onCallEnd}
     onAcceptInvite={onAcceptInvite}
     invitePreview={invitePreview}
@@ -192,16 +226,35 @@ function App() {
 
   return (
     <div className="shell" data-screen-label={`${mobile?"Mobile · ":""}${label}`}>
-      {mobile ? <PhoneFrame>{screen}</PhoneFrame> : (
-        <div className={route === "dashboard" || route === "settings" ? "page page-wide" : "page"}>
-          {screen}
+      {updateInfo && (
+        <div className="update-banner" role="status">
+          <span className="mono">
+            nova versão <b>{updateInfo.version}</b> disponível
+            {updateState === "error" && updateErr ? ` · erro: ${updateErr}` : null}
+          </span>
+          <div style={{display:"flex",gap:8}}>
+            <button
+              className="btn-primary"
+              disabled={updateState === "installing"}
+              onClick={installUpdate}
+            >
+              {updateState === "installing" ? "baixando..." : "atualizar agora"}
+            </button>
+            <button
+              className="btn-ghost"
+              onClick={() => setUpdateInfo(null)}
+              disabled={updateState === "installing"}
+            >
+              depois
+            </button>
+          </div>
         </div>
       )}
 
-      {!showTweaks ? (
-        <button className="tweaks-fab" onClick={()=>setShowTweaks(true)}>Tweaks</button>
-      ) : (
-        <TweaksPanel tweaks={tweaks} setTweak={setTweak} onClose={()=>setShowTweaks(false)} />
+      {mobile ? <PhoneFrame>{screen}</PhoneFrame> : (
+        <div className={["dashboard","settings","call","precall"].includes(route) ? "page page-wide" : "page"}>
+          {screen}
+        </div>
       )}
     </div>
   );
@@ -213,9 +266,11 @@ function Router(p) {
     case "landing":    return <Landing go={p.go} variant={p.tweaks.landingVariant} />;
     case "signup":     return <Signup go={p.go} setSession={p.setSession} />;
     case "login":      return <Login go={p.go} setSession={p.setSession} />;
+    case "forgot-password": return <ForgotPassword go={p.go} setSession={p.setSession} />;
+    case "reset-password":  return <ResetPassword  go={p.go} session={p.session} setSession={p.setSession} />;
     case "otp":        return <OTP go={p.go} session={p.session} />;
     case "onboarding": return <Onboarding go={p.go} session={p.session} setSession={p.setSession} />;
-    case "dashboard":  return <Dashboard go={p.go} session={p.session} rooms={p.rooms} setActiveRoom={p.setActiveRoom} />;
+    case "dashboard":  return <Dashboard go={p.go} session={p.session} rooms={p.rooms} loading={p.roomsLoading} onPasteLink={p.onPasteLink} setActiveRoom={p.setActiveRoom} />;
     case "create":     return <DashBehind go={p.go} session={p.session} rooms={p.rooms} setActiveRoom={p.setActiveRoom}><CreateRoom go={p.go} onCreate={p.onCreate} activeRoom={p.activeRoom} /></DashBehind>;
     case "join":       return <DashBehind go={p.go} session={p.session} rooms={p.rooms} setActiveRoom={p.setActiveRoom}><JoinByLink go={p.go} onPasteLink={p.onPasteLink} activeRoom={p.activeRoom} /></DashBehind>;
     case "invite":     return <InviteLanding go={p.go} invite={p.invitePreview || { room: p.activeRoom?.name, slug: p.activeRoom?.slug, host: "host", hostInitials: "H", locked: !!p.activeRoom?.locked, present: [] }} onAccept={p.onAcceptInvite} />;

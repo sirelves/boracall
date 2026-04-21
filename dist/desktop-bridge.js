@@ -62,6 +62,20 @@
     },
   };
 
+  // --- Auto-updater (Tauri only) ------------------------------------------
+  // checkForUpdate → { available, version, current_version, notes }
+  // installUpdate → baixa e aplica; o app reinicia sozinho após sucesso.
+  const updater = {
+    check: () =>
+      isNative
+        ? invoke("check_for_update")
+        : Promise.resolve({ available: false, current_version: null }),
+    install: () =>
+      isNative
+        ? invoke("install_update")
+        : Promise.reject(new Error("updater: browser mode")),
+  };
+
   // --- Build the public bridge object -------------------------------------
   const bridge = {
     isNative,
@@ -73,6 +87,7 @@
     clipboard,
     window: win,
     opener,
+    updater,
   };
 
   if (isNative) {

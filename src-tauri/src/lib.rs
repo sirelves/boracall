@@ -1,5 +1,6 @@
 use serde::Serialize;
 use tauri::{Manager, Runtime};
+use tauri_plugin_updater::UpdaterExt;
 
 #[derive(Serialize)]
 struct PlatformInfo {
@@ -52,16 +53,67 @@ async fn window_toggle_maximize<R: Runtime>(app: tauri::AppHandle<R>) -> Result<
     }
 }
 
+#[derive(Serialize)]
+struct UpdateInfo {
+    available: bool,
+    version: Option<String>,
+    current_version: &'static str,
+    notes: Option<String>,
+}
+
+#[tauri::command]
+async fn check_for_update<R: Runtime>(app: tauri::AppHandle<R>) -> Result<UpdateInfo, String> {
+    let update = app
+        .updater()
+        .map_err(|e| e.to_string())?
+        .check()
+        .await
+        .map_err(|e| e.to_string())?;
+    match update {
+        Some(u) => Ok(UpdateInfo {
+            available: true,
+            version: Some(u.version.clone()),
+            current_version: env!("CARGO_PKG_VERSION"),
+            notes: u.body.clone(),
+        }),
+        None => Ok(UpdateInfo {
+            available: false,
+            version: None,
+            current_version: env!("CARGO_PKG_VERSION"),
+            notes: None,
+        }),
+    }
+}
+
+#[tauri::command]
+async fn install_update<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    let update = app
+        .updater()
+        .map_err(|e| e.to_string())?
+        .check()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "nenhuma atualização disponível".to_string())?;
+    update
+        .download_and_install(|_chunk, _total| {}, || {})
+        .await
+        .map_err(|e| e.to_string())?;
+    app.restart();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             platform_info,
             set_invisible_mode,
             window_minimize,
             window_toggle_maximize,
+            check_for_update,
+            install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

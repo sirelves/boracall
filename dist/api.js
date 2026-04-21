@@ -104,6 +104,22 @@
     return u;
   }
 
+  async function requestPasswordReset(email) {
+    return request("/api/auth/request-password-reset", {
+      method: "POST", auth: false,
+      body: { email },
+    });
+  }
+
+  async function resetPassword({ email, code, newPassword }) {
+    const r = await request("/api/auth/reset-password", {
+      method: "POST", auth: false,
+      body: { email, code, new_password: newPassword },
+    });
+    setToken(r.token); setUser(r.user);
+    return r;
+  }
+
   async function me() {
     const u = await request("/api/auth/me");
     setUser(u);
@@ -173,7 +189,7 @@
     request,
     ApiError,
     // auth
-    signup, login, requestOtp, verifyOtp, me, updateMe, logout,
+    signup, login, requestOtp, verifyOtp, requestPasswordReset, resetPassword, me, updateMe, logout,
     getToken, getUser, setToken, setUser,
     // rooms
     listRooms, createRoom, getRoom, joinRoom,

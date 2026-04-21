@@ -162,10 +162,136 @@ function Login({ go, setSession }) {
           } catch (e) { setErr(prettyApiErr(e)); }
           finally { setBusy(false); }
         }}>{busy ? "entrando..." : T.do_login}</button>
+        <div style={{textAlign:"center",marginTop:4}}>
+          <a className="dim" style={{cursor:"pointer",fontSize:12,borderBottom:"1px solid var(--line)"}} onClick={()=>go("forgot-password")}>esqueci minha senha</a>
+        </div>
       </div>
       <div className="auth-foot">
         <span>{T.no_account}</span>
         <a onClick={()=>go("signup")}>{T.signup_here}</a>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Forgot password ----------
+// Step 1: user digita email → server manda código 8 dígitos.
+function ForgotPassword({ go, setSession }) {
+  const [email, setEmail] = useS1("");
+  const [err, setErr] = useS1("");
+  const [busy, setBusy] = useS1(false);
+  const valid = /.+@.+\..+/.test(email);
+
+  const submit = async () => {
+    if (!valid || busy) return;
+    setErr(""); setBusy(true);
+    try {
+      await window.api.requestPasswordReset(email);
+      setSession(s => ({ ...s, email }));  // carrega o e-mail pra próxima tela
+      go("reset-password");
+    } catch (e) { setErr(prettyApiErr(e)); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="auth">
+      <div className="auth-head">
+        <h2>Redefinir senha</h2>
+        <div className="sub">Digite seu e-mail. Se existir uma conta, mandamos um código.</div>
+      </div>
+      <div className="auth-body">
+        <label className="label">e-mail</label>
+        <input
+          className="input"
+          placeholder="voce@empresa.com"
+          value={email}
+          onChange={(e)=>setEmail(e.target.value)}
+          onKeyDown={(e)=>{ if (e.key === "Enter") submit(); }}
+          autoFocus
+        />
+        {err && <div className="form-error mono">{err}</div>}
+        <button className="btn-primary" disabled={!valid || busy} onClick={submit}>
+          {busy ? "enviando..." : "enviar código"}
+        </button>
+      </div>
+      <div className="auth-foot">
+        <a onClick={()=>go("login")}>← voltar pro login</a>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Reset password ----------
+// Step 2: user digita código + nova senha → server troca a senha e loga.
+function ResetPassword({ go, session, setSession }) {
+  const [email, setEmail] = useS1(session.email || "");
+  const [code, setCode] = useS1("");
+  const [pw, setPw] = useS1("");
+  const [show, setShow] = useS1(false);
+  const [err, setErr] = useS1("");
+  const [busy, setBusy] = useS1(false);
+  const [sending, setSending] = useS1(false);
+  const valid = /.+@.+\..+/.test(email) && /^\d{6,8}$/.test(code.trim()) && pw.length >= 8;
+
+  const submit = async () => {
+    if (!valid || busy) return;
+    setErr(""); setBusy(true);
+    try {
+      const r = await window.api.resetPassword({ email, code: code.trim(), newPassword: pw });
+      setSession(s => ({ ...s, email: r.user.email, id: r.user.id, displayName: r.user.display_name || "" }));
+      go(r.user.display_name ? "dashboard" : "onboarding");
+    } catch (e) { setErr(prettyApiErr(e)); }
+    finally { setBusy(false); }
+  };
+
+  const resend = async () => {
+    if (sending) return;
+    setErr(""); setSending(true);
+    try {
+      await window.api.requestPasswordReset(email);
+    } catch (e) { setErr(prettyApiErr(e)); }
+    finally { setSending(false); }
+  };
+
+  return (
+    <div className="auth">
+      <div className="auth-head">
+        <h2>Nova senha</h2>
+        <div className="sub">Cola o código que chegou em <b>{session.email || "seu e-mail"}</b> e define uma senha nova.</div>
+      </div>
+      <div className="auth-body">
+        {!session.email && (
+          <>
+            <label className="label">e-mail</label>
+            <input className="input" value={email} onChange={(e)=>setEmail(e.target.value)} />
+          </>
+        )}
+        <label className="label">código</label>
+        <input
+          className="input mono"
+          placeholder="12345678"
+          value={code}
+          onChange={(e)=>setCode(e.target.value.replace(/\D/g,"").slice(0,8))}
+          inputMode="numeric"
+          autoFocus={!!session.email}
+        />
+        <label className="label">nova senha</label>
+        <div className="pw">
+          <input className="input" type={show?"text":"password"} placeholder="mínimo 8 caracteres" value={pw} onChange={(e)=>setPw(e.target.value)} />
+          <button className="eye" onClick={()=>setShow(s=>!s)}>{show?"esconder":"mostrar"}</button>
+        </div>
+        {err && <div className="form-error mono">{err}</div>}
+        <button className="btn-primary" disabled={!valid || busy} onClick={submit}>
+          {busy ? "trocando..." : "redefinir senha"}
+        </button>
+        <div className="otp-resend mono">
+          <a className="dim" style={{cursor:"pointer",borderBottom:"1px solid var(--line)"}} onClick={resend}>
+            {sending ? "enviando..." : "reenviar código"}
+          </a>
+        </div>
+      </div>
+      <div className="auth-foot">
+        <a onClick={()=>go("login")}>← voltar pro login</a>
       </div>
     </div>
   );
@@ -369,40 +495,68 @@ function MicBars({ level, n = 14 }) {
 }
 
 // ---------- Dashboard (rooms) ----------
-function Dashboard({ go, session, rooms, setActiveRoom, onCreate, onJoin }) {
+function Dashboard({ go, session, rooms, setActiveRoom, onCreate, onJoin, onPasteLink, loading }) {
   const T = STRINGS.pt;
+  const [quick, setQuick] = useS1("");
   const persistent = rooms.filter(r => r.type === "persistent");
   const ephemeral = rooms.filter(r => r.type === "ephemeral");
+  const liveCount = rooms.filter(r=>r.live).length;
+
+  const doQuickJoin = () => {
+    const v = quick.trim();
+    if (!v) return;
+    setQuick("");
+    if (onPasteLink) onPasteLink(v);
+  };
 
   return (
     <div className="dash" data-screen-label="06 Dashboard">
       <aside className="dash-side">
-        <div className="sidetitle">{T.workspace}</div>
-        <div className="ws-item on"><span className="dot" /> Time Engenharia</div>
-        <div className="ws-item"><span className="dot" /> Estúdio</div>
-        <div className="ws-item"><span className="dot" /> Pessoal</div>
-        <div className="divider" style={{margin:"6px 0"}} />
         <div className="sidetitle">Navegar</div>
-        <div className="ws-item on"><span className="dot" /> Salas</div>
-        <div className="ws-item" onClick={()=>go("settings")}><span className="dot" /> {T.settings}</div>
+        <div className="ws-item on">
+          <SidebarIcon name="rooms" />
+          <span>Salas</span>
+        </div>
+        <div className="ws-item" onClick={()=>go("settings")}>
+          <SidebarIcon name="settings" />
+          <span>{T.settings}</span>
+        </div>
       </aside>
 
       <section className="dash-main">
         <div className="dash-head">
           <div>
             <h2>{T.your_rooms}</h2>
-            <div className="sub">{rooms.filter(r=>r.live).length} ao vivo · {rooms.length} no total · entrada como <b style={{color:"var(--fg)"}}>{session.displayName || "você"}</b></div>
+            <div className="sub">
+              <b style={{color:liveCount>0?"var(--good)":"var(--fg-dim)"}}>{liveCount}</b> ao vivo
+              {" · "}
+              <b style={{color:"var(--fg)"}}>{rooms.length}</b> no total
+              {" · entrada como "}
+              <b style={{color:"var(--fg)"}}>{session.displayName || "você"}</b>
+            </div>
           </div>
           <div className="dash-actions">
+            <div className="quick-join">
+              <input
+                placeholder="cola link ou slug…"
+                value={quick}
+                onChange={e=>setQuick(e.target.value)}
+                onKeyDown={e=>{ if (e.key === "Enter") doQuickJoin(); }}
+              />
+              <kbd>ENTER</kbd>
+            </div>
             <button className="btn-line" onClick={()=>go("join")}>↳ {T.join_room}</button>
             <button className="btn-primary" onClick={()=>go("create")}>+ {T.create_room}</button>
-            <button className="btn-ghost" onClick={()=>go("settings")} title="Configurações">⚙</button>
           </div>
         </div>
 
         <div>
           <div className="label" style={{marginBottom:8}}>{T.rooms_persistent}</div>
           <div className="rooms-grid">
+            {loading && persistent.length === 0 && <RoomCardSkeleton count={2} />}
+            {!loading && persistent.length === 0 && (
+              <div className="empty">Nenhuma sala fixa — salas fixas ficam ativas até você remover.</div>
+            )}
             {persistent.map(r => <RoomCard key={r.id} r={r} onClick={()=>{ setActiveRoom(r); go(r.live?"call":"precall"); }} />)}
           </div>
         </div>
@@ -410,7 +564,8 @@ function Dashboard({ go, session, rooms, setActiveRoom, onCreate, onJoin }) {
         <div>
           <div className="label" style={{marginBottom:8}}>{T.rooms_ephemeral}</div>
           <div className="rooms-grid">
-            {ephemeral.length === 0 && (
+            {loading && ephemeral.length === 0 && <RoomCardSkeleton count={3} />}
+            {!loading && ephemeral.length === 0 && (
               <div className="empty">Nenhuma sala rápida ativa · crie uma e compartilhe o link</div>
             )}
             {ephemeral.map(r => <RoomCard key={r.id} r={r} onClick={()=>{ setActiveRoom(r); go(r.live?"call":"precall"); }} />)}
@@ -421,26 +576,54 @@ function Dashboard({ go, session, rooms, setActiveRoom, onCreate, onJoin }) {
   );
 }
 
+function SidebarIcon({ name }) {
+  const map = {
+    rooms: <path d="M3 10h10M3 5h10M3 15h7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" fill="none"/>,
+    settings: <g fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="2.5"/><path d="M8 1v2.2M8 12.8V15M1 8h2.2M12.8 8H15M3 3l1.6 1.6M11.4 11.4L13 13M3 13l1.6-1.6M11.4 4.6L13 3"/></g>,
+  };
+  return (
+    <svg className="ws-icon" viewBox="0 0 16 16" aria-hidden="true">
+      {map[name] || null}
+    </svg>
+  );
+}
+
+function RoomCardSkeleton({ count = 2 }) {
+  return Array.from({length: count}).map((_,i)=>(
+    <div key={i} className="room-card" style={{cursor:"default"}}>
+      <div className="rc-top">
+        <span className="skel skel-line" style={{width:"60%",height:16}} />
+        <span className="skel skel-line" style={{width:40,height:10}} />
+      </div>
+      <div className="skel skel-line" style={{width:"40%",height:14}} />
+      <div className="skel skel-line" style={{width:"30%",height:10}} />
+    </div>
+  ));
+}
+
 function RoomCard({ r, onClick }) {
   const inits = (n) => n.split(" ").map(s=>s[0]).join("").slice(0,2).toUpperCase();
   return (
     <div className={`room-card ${r.live?"live":""}`} onClick={onClick}>
       <div className="rc-top">
         <span className="rc-name">{r.name}</span>
-        <span className={`rc-type ${r.live?"live":""}`}>{r.live? "● ao vivo" : r.type==="persistent"?"fixa":"rápida"}</span>
+        <span className={`rc-type ${r.live?"live":""}`}>
+          {r.live ? (<><span className="live-dot" /> ao vivo</>) : (r.type === "persistent" ? "fixa" : "rápida")}
+        </span>
       </div>
       <div className="rc-users">
         <span className="rc-stack">
           {r.members.slice(0,4).map((m,i)=>(<span key={i} className="initials sm">{inits(m)}</span>))}
         </span>
-        <span>{r.members.length}</span>
+        <span>{r.count || r.members.length}</span>
       </div>
       <div className="rc-foot">
         <span>{r.live ? `${r.speaking||0} falando` : `ativa há ${r.lastActive}`}</span>
-        <span>{r.id}</span>
+        <span className="mono">{r.slug}</span>
       </div>
+      <span className="rc-enter">entrar →</span>
     </div>
   );
 }
 
-Object.assign(window, { Landing, Signup, Login, OTP, Onboarding, Dashboard, MicBars, GoogleG });
+Object.assign(window, { Landing, Signup, Login, ForgotPassword, ResetPassword, OTP, Onboarding, Dashboard, RoomCard, RoomCardSkeleton, SidebarIcon, MicBars, GoogleG });
