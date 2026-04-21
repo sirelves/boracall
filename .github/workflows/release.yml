@@ -162,11 +162,17 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          # scp funciona em todos os OSes (Windows runner não tem rsync).
-          # -O força SCP protocol antigo (compatibilidade com servidores OpenSSH recentes).
-          for f in dist-release/*; do
+          set -x
+          ls -la dist-release/
+          echo "--- testing ssh first ---"
+          ssh -o StrictHostKeyChecking=no -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST" "echo ssh-ok && whoami"
+          echo "--- uploading bundles ---"
+          # scp each file (no -O flag — not supported across all scp versions)
+          cd dist-release
+          for f in *; do
             [ -f "$f" ] || continue
-            scp -O -o StrictHostKeyChecking=no "$f" "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/"
+            echo "uploading: $f"
+            scp -o StrictHostKeyChecking=no -o BatchMode=yes "$f" "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/"
           done
           ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" "chown -R www-data:www-data /var/www/boracall/downloads && /usr/local/bin/boracall-update-symlinks"
 
