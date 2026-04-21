@@ -155,7 +155,7 @@ jobs:
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           ssh-keyscan -T 20 -p 22 "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
-      - name: Rsync desta plataforma → VPS
+      - name: Rsync desta plataforma → VPS + update symlinks
         if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
         shell: bash
         env:
@@ -163,7 +163,9 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
           rsync -avz dist-release/ "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/"
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" "chown -R www-data:www-data /var/www/boracall/downloads"
+          # Reponta os symlinks estáveis (BoraCall-macos-arm64.dmg, etc) pro bundle mais novo
+          # do tipo que essa plataforma acabou de subir. Script vive em /usr/local/bin.
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "chown -R www-data:www-data /var/www/boracall/downloads && /usr/local/bin/boracall-update-symlinks"
 
   # ---------------------------------------------------------------------------
   # Release: gera SHA256SUMS global + cria GH Release draft (best-effort)
