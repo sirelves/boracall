@@ -12,7 +12,8 @@ function CreateRoom({ go, onCreate, activeRoom }) {
 
   // The backend mints the slug. This preview is illustrative only — the real slug
   // is known after /api/rooms returns.
-  const previewLink = `boracall.app/s/***`;
+  const publicHost = (window.BC_PUBLIC_URL || "https://boracall.com").replace(/^https?:\/\//, "");
+  const previewLink = `${publicHost}/s/***`;
   const err = activeRoom && activeRoom._error;
 
   const submit = async () => {
@@ -107,7 +108,7 @@ function InviteLanding({ go, invite, onAccept }) {
         <span className="host-av">{invite.hostInitials}</span>
         <div className="host-meta">
           <div className="t">{invite.room}</div>
-          <div className="s">{T.invite_by} <b style={{color:"var(--fg)"}}>{invite.host}</b> · boracall.app/s/{invite.slug}</div>
+          <div className="s">{T.invite_by} <b style={{color:"var(--fg)"}}>{invite.host}</b> · {(window.BC_PUBLIC_URL || "https://boracall.com").replace(/^https?:\/\//, "")}/s/{invite.slug}</div>
         </div>
       </div>
       <div className="invite-body">
@@ -273,17 +274,10 @@ function Call({ go, activeRoom, session, tweaks, onEnd }) {
       });
       rt.on("_error", () => setStatus("failed"));
 
+      // IMPORTANT: never store "me" in peers state — it'd capture stale `muted`
+      // from closure. We derive the self row at render time from current state.
       const render = () => {
         const list = [];
-        // Me first.
-        list.push({
-          id: session.id || "me",
-          name: (session.displayName || session.email || "você") + "",
-          state: muted ? "muted" : (localLevel > 0.08 ? "speaking" : "listening"),
-          level: localLevel,
-          isYou: true,
-          muted,
-        });
         for (const [uid, p] of mesh.peers) {
           list.push({
             id: uid,
@@ -293,7 +287,7 @@ function Call({ go, activeRoom, session, tweaks, onEnd }) {
             muted: !!p.muted,
           });
         }
-        if (list.length > peakUsersRef.current) peakUsersRef.current = list.length;
+        if (list.length + 1 > peakUsersRef.current) peakUsersRef.current = list.length + 1;
         setPeers(list);
       };
       mesh.on("peers", render);
@@ -405,11 +399,20 @@ function Call({ go, activeRoom, session, tweaks, onEnd }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tweaks.micMode]);
 
-  const speakingCount = peers.filter(u => u.state === "speaking").length;
+  // Self row is derived here (no stale closure): reflects live `muted` + `localLevel`.
+  const selfRow = {
+    id: session.id || "me",
+    name: (session.displayName || session.email || "você") + "",
+    state: muted ? "muted" : (localLevel > 0.08 ? "speaking" : "listening"),
+    level: localLevel,
+    isYou: true,
+    muted,
+  };
+  const users = [selfRow, ...peers];
+  const speakingCount = users.filter(u => u.state === "speaking").length;
   const mm = String(Math.floor(elapsed/60)).padStart(2,"0");
   const ss = String(elapsed%60).padStart(2,"0");
-  const ordered = peers;
-  const users = peers;
+  const ordered = users;
   const statusLabel =
     status === "live" ? "Conectado" :
     status === "reconnecting" ? "Reconectando" :
@@ -432,7 +435,7 @@ function Call({ go, activeRoom, session, tweaks, onEnd }) {
             <span className="room-crumb"><span className="slash">/</span>{activeRoom?.slug || "eng-weekly"}<span className="slash">·</span><span className="mono">{mm}:{ss}</span></span>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <CopyButton text={`${(window.BC_PUBLIC_URL || "https://boracall.app")}/s/${activeRoom?.slug}`} label="convite" done="link copiado!" />
+            <CopyButton text={`${window.BC_PUBLIC_URL || "https://boracall.com"}/s/${activeRoom?.slug}`} label="convite" done="link copiado!" />
             <Status state={statusState} label={statusLabel} />
           </div>
         </header>

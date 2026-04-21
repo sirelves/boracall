@@ -55,7 +55,7 @@ const STRINGS = {
     // Join
     join_title: "Entrar por link",
     paste_link: "Cola o link do convite",
-    paste_ph: "https://boracall.app/s/...",
+    paste_ph: "https://boracall.com/s/...",
     join_cta: "Entrar",
     // Invite screen (shown to joiners)
     invite_host: "Você foi convidado pra",

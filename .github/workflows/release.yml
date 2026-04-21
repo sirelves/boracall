@@ -138,11 +138,41 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # Publica esse bundle no VPS assim que esse runner específico termina —
+      # sem esperar os outros. Cada plataforma fica online independentemente.
+      - name: Install SSH key
+        if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Trust VPS host key
+        if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keyscan -T 20 -p 22 "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Rsync desta plataforma → VPS
+        if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          rsync -avz dist-release/ "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/"
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "chown -R www-data:www-data /var/www/boracall/downloads"
+
   # ---------------------------------------------------------------------------
-  # Release: junta todos os artefatos, publica no VPS, cria GH Release draft
+  # Release: gera SHA256SUMS global + cria GH Release draft (best-effort)
+  # Roda depois de TODOS os builds terminarem (sucesso OU falha) pra o que
+  # estiver disponível entrar no release.
   # ---------------------------------------------------------------------------
   release:
     needs: build
+    if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
 
@@ -165,35 +195,25 @@ jobs:
           echo "== bundles finais =="
           ls -lah out/
 
-      # --- VPS deploy ---
+      # SHA256SUMS atualizado no VPS com TODOS os bundles já publicados
+      # (por qualquer plataforma que tenha finalizado, parcial OK).
       - name: Install SSH key
         if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
 
-      - name: Trust VPS host key
-        if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-        run: |
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          for i in 1 2 3 4 5; do
-            if nc -zvw5 "$DEPLOY_HOST" 22; then
-              echo "tcp:22 reachable on attempt $i"; break
-            fi
-            echo "attempt $i failed, retrying..."; sleep 3
-          done
-          ssh-keyscan -T 20 -p 22 "$DEPLOY_HOST" >> ~/.ssh/known_hosts
-
-      - name: Rsync bundles → /var/www/boracall/downloads
+      - name: Regenerate SHA256SUMS on VPS
         if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          rsync -avz --delete out/ "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/"
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" "chown -R www-data:www-data /var/www/boracall/downloads"
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keyscan -T 20 -p 22 "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd /var/www/boracall/downloads && \
+            sha256sum BoraCall*.dmg *.exe *.msi *.AppImage *.deb *.rpm 2>/dev/null > SHA256SUMS && \
+            chown www-data:www-data SHA256SUMS && cat SHA256SUMS"
 
       # --- GitHub Release ---
       - name: Criar/atualizar GitHub Release (draft)
