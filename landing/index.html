@@ -9,7 +9,7 @@
   <link rel="icon" type="image/png" href="assets/mark.png" />
   <meta property="og:type" content="website" />
   <meta property="og:title" content="BoraCall — chamada de voz sem enrolação" />
-  <meta property="og:description" content="Cria uma sala, compartilha o link, pronto. Mac, Windows e Linux. Open source. 3MB." />
+  <meta property="og:description" content="Cria uma sala, compartilha o link, pronto. Mac, Windows e Linux. 3MB." />
   <meta property="og:url" content="https://boracall.com" />
   <meta property="og:image" content="https://boracall.com/assets/og.png" />
   <meta name="twitter:card" content="summary_large_image" />
@@ -28,8 +28,9 @@
   </a>
   <div class="nav-links">
     <a href="#features">features</a>
+    <a href="#how">como funciona</a>
+    <a href="#faq">perguntas</a>
     <a href="#download">baixar</a>
-    <a href="https://github.com/boracall/boracall" target="_blank" rel="noopener">github</a>
   </div>
   <a href="#download" class="nav-cta">Baixar</a>
 </nav>
@@ -54,7 +55,7 @@
         <span>Latência</span><b>&lt; 50ms p50</b>
         <span>Codec</span><b>Opus 48kHz</b>
         <span>Tamanho</span><b>~3MB instalado</b>
-        <span>Custo</span><b>grátis até 4 pessoas</b>
+        <span>Custo</span><b>grátis no beta</b>
       </div>
     </div>
 
@@ -73,7 +74,7 @@
           <div class="row speaking"><span class="av">MC</span><span>Maria Clara</span><span class="bars live"></span></div>
           <div class="row"><span class="av">LF</span><span>Lucas Ferreira</span><span class="bars"></span></div>
           <div class="row"><span class="av">AB</span><span>Ana Beatriz</span><span class="bars"></span></div>
-          <div class="row meta"><span>4 pessoas</span><span>42ms · 0.1%</span></div>
+          <div class="row meta"><span>ao vivo · 42ms</span><span>loss 0.1%</span></div>
         </div>
       </div>
     </div>
@@ -88,33 +89,33 @@
     <div class="feature-grid">
       <div class="feature">
         <div class="f-icon">◊</div>
-        <h3>P2P de verdade</h3>
-        <p>Áudio flui direto entre os peers via WebRTC, com Opus 48kHz. Sem servidor intermediando a voz até 4 pessoas — latência mínima, zero custo por minuto.</p>
+        <h3>Áudio P2P cristalino</h3>
+        <p>Voz em Opus 48kHz trafegando direto entre os peers via WebRTC. Latência mínima, sem servidor no meio do áudio, sem "essa call tá travando" — que é o padrão dos outros apps.</p>
       </div>
       <div class="feature">
         <div class="f-icon">▧</div>
         <h3>Nativo nos 3 desktops</h3>
-        <p>Tauri + Rust. 3MB de binário. Abre em 200ms. Não é Electron, não sobe um Chromium do zero. Usa o webview do sistema.</p>
+        <p>Mac, Windows e Linux. 3MB instalado, abre em 200ms. Não é Electron — não fica consumindo 800MB de RAM parado. É um app leve que some quando você não precisa.</p>
       </div>
       <div class="feature">
         <div class="f-icon">⎔</div>
-        <h3>Sem fricção</h3>
-        <p>Criar sala = um clique. Entrar = colar o link. Sem lobby, sem PIN, sem convite na agenda. Você tá na call em 5 segundos.</p>
+        <h3>Sem fricção pra entrar</h3>
+        <p>Criar sala = um clique. Entrar = colar o link. Sem PIN, sem sala de espera, sem "aguardando host iniciar". Você tá falando em 5 segundos.</p>
       </div>
       <div class="feature">
         <div class="f-icon">▤</div>
-        <h3>Backend em Rust</h3>
-        <p>Signaling WebSocket em axum + tokio, Postgres 16. Stateless, escala horizontal. Binário único de 4MB — cabe em qualquer VPS.</p>
+        <h3>Privacidade no DNA</h3>
+        <p>A voz nunca passa pelo nosso servidor — é peer-to-peer direto. A gente só sabe quem entrou em que sala, e logs caem em 30 dias. Zero gravação, zero telemetria.</p>
       </div>
       <div class="feature">
         <div class="f-icon">⟠</div>
         <h3>Atalhos de teclado</h3>
-        <p><kbd>M</kbd> mute · <kbd>SPACE</kbd> push-to-talk · <kbd>H</kbd> esconder UI · <kbd>ESC</kbd> sair. Modo "always on top" pra ficar visível enquanto você trabalha.</p>
+        <p><kbd>M</kbd> mute · <kbd>SPACE</kbd> push-to-talk · <kbd>H</kbd> esconder UI · <kbd>ESC</kbd> sair. Modo "always on top" pra manter a call visível enquanto você trabalha em outra janela.</p>
       </div>
       <div class="feature">
         <div class="f-icon">⌬</div>
-        <h3>Open source</h3>
-        <p>MIT. Código aberto no GitHub. Self-hostável no seu VPS em 5 minutos — Postgres, server, nginx + TLS. Sem lock-in.</p>
+        <h3>Grátis enquanto puder</h3>
+        <p>Sem limite de duração, sem paywall na criação de conta, sem cartão de crédito. Planos pagos (transcrição, gravação, recursos de time) vão aparecer — até lá, é grátis de verdade.</p>
       </div>
     </div>
   </div>
@@ -124,7 +125,7 @@
 <section class="download" id="download">
   <div class="download-inner">
     <h2>Baixar BoraCall</h2>
-    <p class="lede">Grátis pra sempre. Sem conta pra instalar, sem telemetria.</p>
+    <p class="lede">Grátis enquanto estiver em beta. Sem cartão de crédito, sem telemetria.</p>
 
     <div class="dl-grid">
       <!-- ----- macOS -->
@@ -180,9 +181,8 @@
     </div>
 
     <div class="dl-arm mono">
-      Também tem <a href="https://boracall.com/downloads/BoraCall_0.1.0_arm64.AppImage">Linux arm64</a> ·
-      <a href="https://boracall.com/downloads/BoraCall_0.1.0_arm64-setup.exe">Windows ARM</a> ·
-      <a href="https://github.com/boracall/boracall/releases">todas as versões no GitHub</a>.
+      Também em versão <a href="https://boracall.com/downloads/BoraCall_0.1.0_arm64.AppImage">Linux ARM</a> e
+      <a href="https://boracall.com/downloads/BoraCall_0.1.0_arm64-setup.exe">Windows ARM</a>.
     </div>
   </div>
 </section>
@@ -210,7 +210,7 @@
       <div class="step">
         <div class="s-num mono">04</div>
         <h3>Fala</h3>
-        <p>WebRTC mesh P2P. Servidor só faz signaling — a voz trafega direto entre vocês. Até 4 pessoas por sala.</p>
+        <p>A voz trafega direto entre as pessoas via WebRTC — o servidor só conecta vocês, não passa pelo áudio. Resultado: latência mínima, qualidade de studio.</p>
       </div>
     </div>
   </div>
@@ -222,38 +222,38 @@
     <h2>Perguntas frequentes</h2>
 
     <details>
-      <summary>É mesmo grátis?</summary>
-      <p>É. Até 4 pessoas por sala, rodando P2P, sem custo por minuto. Acima disso a gente vai precisar de um SFU (servidor que agrega áudio) — aí provavelmente roda um plano pago. Pra call de time pequeno, nunca vai cobrar.</p>
+      <summary>Quanto custa?</summary>
+      <p>Durante o beta é grátis, sem cartão. Quando sair do beta, vai ter um plano grátis pra uso individual e de times pequenos, e planos pagos com recursos extras (transcrição, gravação, histórico, times grandes). A gente avisa com antecedência antes de qualquer cobrança.</p>
     </details>
 
     <details>
       <summary>Precisa criar conta?</summary>
-      <p>Sim pra criar salas. Não pra entrar numa sala que alguém compartilhou com você. Quem recebe o link só coloca um nome e entra.</p>
+      <p>Sim pra criar salas e ter seu workspace. Mas quem recebe o link de uma sala pode entrar só colocando um nome — não precisa cadastrar pra ser convidado.</p>
     </details>
 
     <details>
       <summary>Vocês gravam as chamadas?</summary>
-      <p>Não. A voz nem passa pelo servidor — é P2P direto entre os peers. O server só conhece quem entrou em que sala. Logs de presença ficam 30 dias pra debug e são apagados.</p>
+      <p>Não. A voz nem passa pelos nossos servidores — é peer-to-peer direto entre quem tá na call. A gente só sabe quem entrou em qual sala, e esses logs caem em 30 dias automaticamente.</p>
     </details>
 
     <details>
-      <summary>O app é open source?</summary>
-      <p>Sim, MIT. <a href="https://github.com/boracall/boracall">github.com/boracall/boracall</a>. Você pode auditar, rodar seu próprio server, ou fazer fork.</p>
+      <summary>Funciona em Windows e Linux?</summary>
+      <p>Sim. Instaladores <code>.exe</code> e <code>.msi</code> pro Windows 10/11. <code>.AppImage</code>, <code>.deb</code> e <code>.rpm</code> pro Linux — Ubuntu, Fedora e derivadas. Também tem versão ARM pra Windows (Surface Pro X) e Linux (servidores, SBCs).</p>
     </details>
 
     <details>
-      <summary>E Windows e Linux de ARM?</summary>
-      <p>Tem. Link acima em "também tem…". Raspberry Pi 4+ e Asahi Linux rodam tranquilo. Windows ARM (Surface Pro X, etc.) também.</p>
+      <summary>E no celular?</summary>
+      <p>Entrar numa call já funciona pelo navegador do celular — quem recebe o link abre no Safari/Chrome mobile e cai na chamada direto. Um app nativo iOS e Android tá no roadmap pra esse ano.</p>
     </details>
 
     <details>
-      <summary>Posso usar pra mobile?</summary>
-      <p>Ainda não — o Tauri tem build pra iOS/Android mas a gente não empacotou. Entrar numa call do navegador do celular funciona hoje (<code>boracall.com/s/&lt;slug&gt;</code> abre a PWA). App nativo mobile tá no roadmap.</p>
+      <summary>Qual a qualidade de áudio?</summary>
+      <p>Opus 48kHz, o mesmo codec que o Discord e o Zoom usam nos cenários de maior qualidade. Com cancelamento de eco e supressão de ruído nativos do sistema. Ping médio abaixo de 50ms no Brasil.</p>
     </details>
 
     <details>
-      <summary>Como roda no meu próprio servidor?</summary>
-      <p>3 comandos numa VPS Ubuntu com Docker: clone o repo, <code>docker-compose up -d postgres</code>, <code>cargo run -p boracall-server --release</code>. Nginx na frente com TLS, <code>dist/env.js</code> apontando pro seu domínio. Guia completo no <a href="https://github.com/boracall/boracall/blob/main/HANDOFF.md">HANDOFF.md</a>.</p>
+      <summary>Dá pra compartilhar tela?</summary>
+      <p>Ainda não. Tá no roadmap junto com vídeo opcional. Hoje o BoraCall é focado em voz — intencionalmente. Se você precisa de screen share agora, abre em outra ferramenta e deixa a voz aqui.</p>
     </details>
   </div>
 </section>
@@ -274,24 +274,25 @@
         <h4>Produto</h4>
         <a href="#download">Baixar</a>
         <a href="#features">Features</a>
+        <a href="#how">Como funciona</a>
         <a href="#faq">FAQ</a>
       </div>
       <div>
-        <h4>Desenvolvedor</h4>
-        <a href="https://github.com/boracall/boracall">GitHub</a>
-        <a href="https://github.com/boracall/boracall/blob/main/HANDOFF.md">Docs</a>
-        <a href="https://github.com/boracall/boracall/releases">Releases</a>
+        <h4>Empresa</h4>
+        <a href="/sobre">Sobre</a>
+        <a href="/privacidade">Privacidade</a>
+        <a href="/termos">Termos de uso</a>
       </div>
       <div>
         <h4>Suporte</h4>
-        <a href="https://status.boracall.com">Status</a>
         <a href="mailto:oi@boracall.com">oi@boracall.com</a>
-        <a href="/security">Segurança</a>
+        <a href="https://status.boracall.com">Status</a>
+        <a href="/seguranca">Segurança</a>
       </div>
     </div>
   </div>
   <div class="foot-bot mono">
-    © 2026 BoraCall · feito com Rust + WebRTC
+    © 2026 BoraCall · todos os direitos reservados
   </div>
 </footer>
 
