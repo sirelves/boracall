@@ -109,7 +109,8 @@ jobs:
       - name: Build Tauri
         uses: tauri-apps/tauri-action@v0.5.22
         with:
-          args: '--locked'
+          # `tauri build` não aceita --locked diretamente. Cargo flags vão depois de `--`.
+          args: '-- --locked'
 
       # Coleta tudo que esse runner produziu num diretório uniforme pra upload.
       - name: Collect artifacts
