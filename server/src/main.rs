@@ -7,8 +7,10 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 mod auth;
 mod config;
 mod db;
+mod email;
 mod error;
 mod handlers;
+mod otp;
 mod signaling;
 mod state;
 
@@ -40,12 +42,16 @@ async fn main() -> anyhow::Result<()> {
 
     let pool = db::connect(&cfg.database_url).await?;
     let hub = Arc::new(Hub::new());
+    let otp = otp::OtpStore::new();
+    let mailer = email::Mailer::new(cfg.resend_api_key.clone(), cfg.email_from.clone());
 
     let state = AppState {
         db: pool,
         hub,
         jwt_secret: Arc::new(cfg.jwt_secret.clone()),
         jwt_ttl_days: cfg.jwt_ttl_days,
+        otp,
+        mailer,
     };
 
     // ----------------------- routes -----------------------
@@ -57,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
         // auth
         .route("/auth/signup", post(handlers::auth::signup))
         .route("/auth/login", post(handlers::auth::login))
+        .route("/auth/request-otp", post(handlers::auth::request_otp))
         .route("/auth/verify-otp", post(handlers::auth::verify_otp))
         .route("/auth/me", get(handlers::auth::me))
         .route("/auth/me", patch(handlers::auth::update_me))

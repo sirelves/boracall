@@ -54,6 +54,9 @@ num_cpus = "1"
 dashmap = "6"
 parking_lot = "0.12"
 
+# Email (Resend transactional)
+resend-rs = "0.17"
+
 # Production allocator — default malloc is poor under load
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = "0.6"

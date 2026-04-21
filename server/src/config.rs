@@ -10,6 +10,8 @@ pub struct Config {
     pub jwt_ttl_days: i64,
     pub cors_allow_any: bool,
     pub log: String,
+    pub resend_api_key: Option<String>,
+    pub email_from: Option<String>,
 }
 
 impl Config {
@@ -42,6 +44,9 @@ impl Config {
         let log = std::env::var("RUST_LOG")
             .unwrap_or_else(|_| "boracall_server=info,tower_http=info,sqlx=warn".to_string());
 
+        let resend_api_key = std::env::var("BC_RESEND_API_KEY").ok().filter(|s| !s.is_empty());
+        let email_from = std::env::var("BC_EMAIL_FROM").ok().filter(|s| !s.is_empty());
+
         Ok(Self {
             bind,
             database_url,
@@ -49,6 +54,8 @@ impl Config {
             jwt_ttl_days,
             cors_allow_any,
             log,
+            resend_api_key,
+            email_from,
         })
     }
 }

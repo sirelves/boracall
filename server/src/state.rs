@@ -1,5 +1,7 @@
 //! Shared application state — cloned into every handler and WebSocket task.
 
+use crate::email::Mailer;
+use crate::otp::OtpStore;
 use crate::signaling::Hub;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -10,4 +12,6 @@ pub struct AppState {
     pub hub: Arc<Hub>,
     pub jwt_secret: Arc<String>,
     pub jwt_ttl_days: i64,
+    pub otp: OtpStore,
+    pub mailer: Mailer,
 }

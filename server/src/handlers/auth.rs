@@ -140,14 +140,33 @@ pub async fn login(
     }))
 }
 
-/// Dev stub — accepts any 4+ digit code and marks the user verified.
-/// Swap this for real email/SMS OTP issuance + verification before prod launch.
+/// Generates a fresh 6-digit code, stashes it in the OTP store, and emails it.
+/// Safe to call repeatedly — re-issues the code and resets the expiry window.
+pub async fn request_otp(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> AppResult<Json<serde_json::Value>> {
+    let code = state.otp.issue(&auth.email);
+    state
+        .mailer
+        .send_otp(&auth.email, &code)
+        .await
+        .map_err(|e| AppError::Internal(format!("email send: {e}")))?;
+    Ok(Json(serde_json::json!({ "sent": true, "to": auth.email })))
+}
+
+/// Verifies a code previously issued by /auth/request-otp and marks the user as
+/// email_verified. Codes are single-use and expire after 10 minutes.
 pub async fn verify_otp(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(body): Json<VerifyOtpReq>,
 ) -> AppResult<Json<MeResp>> {
     body.validate()?;
+
+    if !state.otp.verify(&auth.email, &body.code) {
+        return Err(AppError::Unauthorized("código inválido ou expirado".into()));
+    }
 
     let row = sqlx::query!(
         r#"
