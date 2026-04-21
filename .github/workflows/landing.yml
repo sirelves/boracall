@@ -32,7 +32,21 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          chmod 700 ~/.ssh
+          # Diagnóstico + retries. Runners do GH às vezes têm firewall de saída
+          # e o ssh-keyscan default dá 5s só — generoso aqui.
+          echo "probing TCP 22 on $DEPLOY_HOST ..."
+          for i in 1 2 3 4 5; do
+            if nc -zvw5 "$DEPLOY_HOST" 22; then
+              echo "tcp:22 reachable on attempt $i"
+              break
+            fi
+            echo "attempt $i failed, retrying..."
+            sleep 3
+          done
+          ssh-keyscan -T 20 -p 22 "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>&1 | tee -a ~/.ssh/known_hosts_debug
+          wc -l ~/.ssh/known_hosts
+          head -1 ~/.ssh/known_hosts || { echo "keyscan produced no output"; exit 1; }
 
       - name: Rsync landing → /var/www/boracall/site
         env:
