@@ -70,10 +70,28 @@ function CreateRoom({ go, onCreate, activeRoom }) {
 }
 
 // ---------- Join by link ----------
-function JoinByLink({ go, onPasteLink }) {
+function JoinByLink({ go, onPasteLink, activeRoom }) {
   const T = STRINGS.pt;
   const [link, setLink] = useS2("");
-  const valid = /boracall\.app\/s\/[a-z0-9-]+/i.test(link);
+  const [busy, setBusy] = useS2(false);
+  const [localErr, setLocalErr] = useS2("");
+  // Aceita URL completa (com ou sem protocolo, apex ou app) OU slug puro.
+  const valid = /(?:\/s\/|^)([a-z0-9-]{3,})$/i.test(link.trim());
+  const remoteErr = activeRoom && activeRoom._error;
+  const err = localErr || remoteErr;
+
+  const submit = async () => {
+    if (!valid || busy) return;
+    setBusy(true); setLocalErr("");
+    try {
+      await onPasteLink(link.trim());
+    } catch (e) {
+      setLocalErr(e.message || "não pôde entrar");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="modal-overlay" onClick={()=>go("dashboard")}>
       <div className="modal" onClick={(e)=>e.stopPropagation()}>
@@ -83,12 +101,20 @@ function JoinByLink({ go, onPasteLink }) {
         </div>
         <div className="modal-body">
           <div className="label">{T.paste_link}</div>
-          <input className="input mono" placeholder={T.paste_ph} value={link} onChange={(e)=>setLink(e.target.value)} autoFocus />
+          <input
+            className="input mono"
+            placeholder={T.paste_ph}
+            value={link}
+            onChange={(e)=>{ setLink(e.target.value); setLocalErr(""); }}
+            onKeyDown={(e)=>{ if (e.key === "Enter") submit(); }}
+            autoFocus
+          />
           <div className="dim mono" style={{fontSize:11}}>Cola o link que te mandaram. A gente cuida do resto.</div>
+          {err && <div className="form-error mono" style={{marginTop:8}}>sala não encontrada — o link pode estar incorreto ou a sala já foi removida</div>}
         </div>
         <div className="modal-foot">
           <button className="btn-ghost" onClick={()=>go("dashboard")}>{T.cancel}</button>
-          <button className="btn-primary" disabled={!valid} onClick={()=>{ onPasteLink(link); }}>{T.join_cta}</button>
+          <button className="btn-primary" disabled={!valid || busy} onClick={submit}>{busy ? "entrando..." : T.join_cta}</button>
         </div>
       </div>
     </div>

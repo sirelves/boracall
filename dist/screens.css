@@ -3,7 +3,7 @@
 /* ================= Call screen (room) ================= */
 .call {
   width: 100%;
-  max-width: 980px;
+  max-width: 1400px;
   margin: 0 auto;
   border: 1px solid var(--line);
   background: var(--bg);
@@ -192,10 +192,9 @@
 /* ================= Dashboard (rooms list) ================= */
 .dash {
   width: 100%;
-  max-width: 1080px;
   display: grid;
   grid-template-columns: 240px 1fr;
-  min-height: 70vh;
+  min-height: calc(100vh - 120px);
   border: 1px solid var(--line);
   background: var(--bg);
 }
@@ -364,7 +363,7 @@
 
 /* ================= Post-call summary ================= */
 .post {
-  width: 100%; max-width: 640px; border: 1px solid var(--line);
+  width: 100%; max-width: 960px; margin: 0 auto; border: 1px solid var(--line);
 }
 .post-head { padding: 22px 24px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .post-head h2 { margin: 0; font-weight: 500; font-size: 22px; letter-spacing: -0.01em; }
@@ -395,7 +394,7 @@
 
 /* ================= Settings ================= */
 .settings {
-  width: 100%; max-width: 720px; border: 1px solid var(--line);
+  width: 100%; max-width: 1100px; margin: 0 auto; border: 1px solid var(--line);
 }
 .set-tabs {
   display: flex; border-bottom: 1px solid var(--line);

@@ -107,6 +107,24 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .setup(|_app| {
+            // Linux/webkit2gtk nega getUserMedia por padrão. Interceptamos a
+            // PermissionRequest e permitimos mic (necessário pra chamadas).
+            #[cfg(target_os = "linux")]
+            {
+                if let Some(window) = _app.get_webview_window("main") {
+                    let _ = window.with_webview(|wv| {
+                        use webkit2gtk::{PermissionRequestExt, WebViewExt};
+                        let inner: webkit2gtk::WebView = wv.inner();
+                        inner.connect_permission_request(|_wv, request| {
+                            request.allow();
+                            true
+                        });
+                    });
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             platform_info,
             set_invisible_mode,

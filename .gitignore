@@ -35,3 +35,6 @@ server/boracall.db*
 # Logs + temp
 *.log
 /tmp/
+
+# dev-local backup (criado por scripts/dev-local.sh)
+dist/env.js.devbak

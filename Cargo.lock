@@ -448,6 +448,7 @@ dependencies = [
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-opener",
  "tauri-plugin-updater",
+ "webkit2gtk",
 ]
 
 [[package]]
