@@ -132,13 +132,13 @@
       <div class="dl-card" data-os="mac">
         <div class="dl-head">
           <div class="dl-os">macOS</div>
-          <div class="dl-ver mono">v0.1.0 · 3.0MB</div>
+          <div class="dl-ver mono">última versão</div>
         </div>
-        <a href="https://boracall.com/downloads/BoraCall_0.1.0_aarch64.dmg" class="dl-primary">
+        <a href="https://boracall.com/downloads/BoraCall-macos-arm64.dmg" class="dl-primary">
           <span>.dmg · Apple Silicon</span>
           <span class="arrow">↓</span>
         </a>
-        <a href="https://boracall.com/downloads/BoraCall_0.1.0_x86_64.dmg" class="dl-secondary">
+        <a href="https://boracall.com/downloads/BoraCall-macos-intel.dmg" class="dl-secondary">
           .dmg · Intel (x86_64)
         </a>
         <div class="dl-note mono">Requer macOS 11 ou superior. Na primeira execução, clique com o botão direito → Abrir.</div>
@@ -148,13 +148,13 @@
       <div class="dl-card" data-os="win">
         <div class="dl-head">
           <div class="dl-os">Windows</div>
-          <div class="dl-ver mono">v0.1.0 · 4.2MB</div>
+          <div class="dl-ver mono">última versão</div>
         </div>
-        <a href="https://boracall.com/downloads/BoraCall_0.1.0_x64-setup.exe" class="dl-primary">
+        <a href="https://boracall.com/downloads/BoraCall-windows.exe" class="dl-primary">
           <span>.exe · Instalador</span>
           <span class="arrow">↓</span>
         </a>
-        <a href="https://boracall.com/downloads/BoraCall_0.1.0_x64_en-US.msi" class="dl-secondary">
+        <a href="https://boracall.com/downloads/BoraCall-windows.msi" class="dl-secondary">
           .msi · MSI empresarial
         </a>
         <div class="dl-note mono">Compatível com Windows 10 e 11. WebView2 é instalado automaticamente quando necessário.</div>
@@ -164,16 +164,16 @@
       <div class="dl-card" data-os="linux">
         <div class="dl-head">
           <div class="dl-os">Linux</div>
-          <div class="dl-ver mono">v0.1.0 · 5.1MB</div>
+          <div class="dl-ver mono">última versão</div>
         </div>
-        <a href="https://boracall.com/downloads/BoraCall_0.1.0_amd64.AppImage" class="dl-primary">
+        <a href="https://boracall.com/downloads/BoraCall-linux.AppImage" class="dl-primary">
           <span>.AppImage · universal</span>
           <span class="arrow">↓</span>
         </a>
-        <a href="https://boracall.com/downloads/bora-call_0.1.0_amd64.deb" class="dl-secondary">
+        <a href="https://boracall.com/downloads/BoraCall-linux.deb" class="dl-secondary">
           .deb · Debian/Ubuntu
         </a>
-        <a href="https://boracall.com/downloads/bora-call-0.1.0-1.x86_64.rpm" class="dl-secondary">
+        <a href="https://boracall.com/downloads/BoraCall-linux.rpm" class="dl-secondary">
           .rpm · Fedora/RHEL
         </a>
         <div class="dl-note mono">Requer libwebkit2gtk-4.1 (Ubuntu 23+, Fedora 40+ e equivalentes).</div>
@@ -181,8 +181,8 @@
     </div>
 
     <div class="dl-arm mono">
-      Também disponível para <a href="https://boracall.com/downloads/BoraCall_0.1.0_arm64.AppImage">Linux ARM</a> e
-      <a href="https://boracall.com/downloads/BoraCall_0.1.0_arm64-setup.exe">Windows ARM</a>.
+      Também disponível para <a href="https://boracall.com/downloads/BoraCall-linux-arm64.AppImage">Linux ARM</a> e
+      <a href="https://boracall.com/downloads/BoraCall-windows-arm64.exe">Windows ARM</a>.
     </div>
   </div>
 </section>
@@ -317,9 +317,9 @@
     }
 
     const LINKS = {
-      mac:   { label: "Baixar para macOS",  href: "https://boracall.com/downloads/BoraCall_0.1.0_aarch64.dmg" },
-      win:   { label: "Baixar para Windows",href: "https://boracall.com/downloads/BoraCall_0.1.0_x64-setup.exe" },
-      linux: { label: "Baixar para Linux",  href: "https://boracall.com/downloads/BoraCall_0.1.0_amd64.AppImage" },
+      mac:   { label: "Baixar para macOS",  href: "https://boracall.com/downloads/BoraCall-macos-arm64.dmg" },
+      win:   { label: "Baixar para Windows",href: "https://boracall.com/downloads/BoraCall-windows.exe" },
+      linux: { label: "Baixar para Linux",  href: "https://boracall.com/downloads/BoraCall-linux.AppImage" },
     };
 
     const os = detectOS();
