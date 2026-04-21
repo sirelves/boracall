@@ -1,48 +1,61 @@
 name: release
 
-# Triggered on a pushed version tag (vX.Y.Z) OR manual dispatch.
-# Produces platform-native bundles on 3 runners, publishes them as a GitHub Release,
-# and uploads them to the VPS (boracall.com/downloads/) via rsync.
+# Dispara em tag "v*.*.*" (ou manual). Roda builds nativos em 4 runners em paralelo,
+# coleta os bundles, publica em /var/www/boracall/downloads/ no VPS e cria um GitHub
+# Release draft com todos os artefatos + SHA256SUMS.
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    tags: ['v*.*.*']
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (without leading v)'
+        description: 'Versão (sem o "v" na frente), ex: 0.1.0'
         required: true
         default: '0.1.0'
+      skip_deploy:
+        description: 'Pular rsync pro VPS (só gera artefatos)'
+        required: false
+        default: 'false'
+        type: boolean
 
 permissions:
-  contents: write        # needed to create the GitHub Release
+  contents: write  # necessário para criar o GH Release
+
+env:
+  # Único lugar pra trocar a versão do action (pinada, não flutuante).
+  TAURI_ACTION_VERSION: v0.5.22
 
 jobs:
-  build-tauri:
+  # ---------------------------------------------------------------------------
+  # Build em 4 runners: macOS ARM + macOS Intel + Linux + Windows
+  # ---------------------------------------------------------------------------
+  build:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest       # Apple Silicon + Intel via universal target
-            args: '--target universal-apple-darwin'
-          - platform: ubuntu-22.04
-            args: ''
-          - platform: windows-latest
-            args: ''
+          - name: macos-arm64
+            runner: macos-latest           # arm64 nativo (Apple Silicon)
+            bundle-glob: '*.dmg'
+          - name: macos-intel
+            runner: macos-13               # último runner Intel x86_64
+            bundle-glob: '*.dmg'
+          - name: linux
+            runner: ubuntu-24.04
+            bundle-globs: '*.AppImage,*.deb,*.rpm'
+          - name: windows
+            runner: windows-latest
+            bundle-globs: '*.msi,*.exe'
 
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          # For universal-apple-darwin we need both aarch64 and x86_64 targets.
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -59,7 +72,7 @@ jobs:
           cache: 'npm'
 
       - name: Install Linux deps
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.name == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -79,123 +92,120 @@ jobs:
       - name: Install node modules
         run: npm ci || npm install
 
-      - name: Bake production API URL into dist/env.js
+      # Reescreve env.js pra apontar pra produção — ANTES do tauri build,
+      # porque o dist/ é embutido dentro do binário em compile time.
+      - name: Bake production env.js
         shell: bash
         run: |
           cat > dist/env.js <<'EOF'
-          // Baked at release time by .github/workflows/release.yml
           (function () {
             window.BC_API_URL    = window.BC_API_URL    || "https://api.boracall.com";
             window.BC_PUBLIC_URL = window.BC_PUBLIC_URL || "https://boracall.com";
           })();
           EOF
 
-      - name: Build Tauri bundle
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS signing + notarization keys go here later when the Apple Developer
-          # account is live. Leave unset for now — the build still succeeds unsigned.
-          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          # APPLE_ID: ${{ secrets.APPLE_ID }}
-          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      # Build the Tauri bundle. No tag/release here — release job faz isso depois
+      # com artifacts de todos os runners (evita race condition).
+      - name: Build Tauri
+        uses: tauri-apps/tauri-action@v0.5.22
         with:
-          tagName: ${{ github.ref_name || format('v{0}', github.event.inputs.version) }}
-          releaseName: 'BoraCall ${{ github.ref_name || github.event.inputs.version }}'
-          releaseBody: |
-            See the site: https://boracall.com
+          args: '--locked'
 
-            Artefatos nativos por plataforma abaixo. Binários também mirrorados em
-            https://boracall.com/downloads/ depois do deploy.
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.args }}
-
-      - name: Collect artifacts (uniform name)
+      # Coleta tudo que esse runner produziu num diretório uniforme pra upload.
+      - name: Collect artifacts
         shell: bash
         run: |
           mkdir -p dist-release
-          if [[ "${{ matrix.platform }}" == "macos-latest" ]]; then
-            cp target/universal-apple-darwin/release/bundle/dmg/*.dmg   dist-release/ 2>/dev/null || true
-            # Individual arch bundles too (builds also emit per-target when available)
-            cp target/aarch64-apple-darwin/release/bundle/dmg/*.dmg     dist-release/ 2>/dev/null || true
-            cp target/x86_64-apple-darwin/release/bundle/dmg/*.dmg      dist-release/ 2>/dev/null || true
-          elif [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
-            cp target/release/bundle/msi/*.msi                          dist-release/ 2>/dev/null || true
-            cp target/release/bundle/nsis/*.exe                         dist-release/ 2>/dev/null || true
-          else
-            cp target/release/bundle/appimage/*.AppImage                dist-release/ 2>/dev/null || true
-            cp target/release/bundle/deb/*.deb                          dist-release/ 2>/dev/null || true
-            cp target/release/bundle/rpm/*.rpm                          dist-release/ 2>/dev/null || true
-          fi
-          ls -la dist-release/ || true
+          shopt -s nullglob 2>/dev/null || true
+          # .dmg (macOS)
+          cp target/release/bundle/dmg/*.dmg           dist-release/ 2>/dev/null || true
+          # .msi + .exe (Windows)
+          cp target/release/bundle/msi/*.msi           dist-release/ 2>/dev/null || true
+          cp target/release/bundle/nsis/*.exe          dist-release/ 2>/dev/null || true
+          # AppImage + .deb + .rpm (Linux)
+          cp target/release/bundle/appimage/*.AppImage dist-release/ 2>/dev/null || true
+          cp target/release/bundle/deb/*.deb           dist-release/ 2>/dev/null || true
+          cp target/release/bundle/rpm/*.rpm           dist-release/ 2>/dev/null || true
+          echo "== artifacts for ${{ matrix.name }} =="
+          ls -lah dist-release/ || true
 
-      - name: Upload artifacts for VPS deploy job
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: boracall-${{ matrix.platform }}
+          name: boracall-${{ matrix.name }}
           path: dist-release/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
-  deploy-vps:
-    needs: build-tauri
-    runs-on: ubuntu-22.04
-    # Skip deploy when secrets aren't set yet (first few releases) — the artifacts are
-    # still on the GH Release.
-    if: ${{ vars.DEPLOY_ENABLED == 'true' }}
+  # ---------------------------------------------------------------------------
+  # Release: junta todos os artefatos, publica no VPS, cria GH Release draft
+  # ---------------------------------------------------------------------------
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
     steps:
-      - name: Download all platform artifacts
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts de todas as plataformas
         uses: actions/download-artifact@v4
         with:
-          path: dist-release
+          path: artifacts
 
-      - name: Flatten
+      - name: Flatten + SHA256SUMS
         run: |
           mkdir -p out
-          find dist-release -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) -exec cp {} out/ \;
-          ls -lah out/
-          # Generate SHA256 checksums the landing can verify against.
+          find artifacts -type f \
+            \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \
+               -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) \
+            -exec cp -n {} out/ \;
           ( cd out && shasum -a 256 * > SHA256SUMS )
+          echo "== bundles finais =="
+          ls -lah out/
 
-      - name: Set up SSH
+      # --- VPS deploy ---
+      - name: Install SSH key
+        if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
 
-      - name: Rsync to VPS
+      - name: Trust VPS host key
+        if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          for i in 1 2 3 4 5; do
+            if nc -zvw5 "$DEPLOY_HOST" 22; then
+              echo "tcp:22 reachable on attempt $i"; break
+            fi
+            echo "attempt $i failed, retrying..."; sleep 3
+          done
+          ssh-keyscan -T 20 -p 22 "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Rsync bundles → /var/www/boracall/downloads
+        if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
           rsync -avz --delete out/ "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/"
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "chown -R www-data:www-data /var/www/boracall/downloads"
 
-      - name: Also attach to GitHub Release
+      # --- GitHub Release ---
+      - name: Criar/atualizar GitHub Release (draft)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name || format('v{0}', github.event.inputs.version) }}
+          name: BoraCall ${{ github.ref_name || github.event.inputs.version }}
+          draft: true
+          prerelease: false
+          body: |
+            Bundles nativos para macOS (Apple Silicon + Intel), Windows e Linux.
+
+            Espelhados também em https://boracall.com/downloads/ (com TLS via Cloudflare).
+            Verifique integridade com o `SHA256SUMS`.
           files: |
             out/*
-            out/SHA256SUMS
-
-  deploy-landing:
-    needs: build-tauri
-    runs-on: ubuntu-22.04
-    if: ${{ vars.DEPLOY_ENABLED == 'true' }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up SSH
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
-      - name: Rsync landing to VPS
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-        run: |
-          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
-          rsync -avz --delete landing/ "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/site/"
