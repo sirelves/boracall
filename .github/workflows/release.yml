@@ -155,17 +155,20 @@ jobs:
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           ssh-keyscan -T 20 -p 22 "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
-      - name: Rsync desta plataforma → VPS + update symlinks
+      - name: Upload esta plataforma → VPS + update symlinks
         if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
         shell: bash
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          rsync -avz dist-release/ "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/"
-          # Reponta os symlinks estáveis (BoraCall-macos-arm64.dmg, etc) pro bundle mais novo
-          # do tipo que essa plataforma acabou de subir. Script vive em /usr/local/bin.
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" "chown -R www-data:www-data /var/www/boracall/downloads && /usr/local/bin/boracall-update-symlinks"
+          # scp funciona em todos os OSes (Windows runner não tem rsync).
+          # -O força SCP protocol antigo (compatibilidade com servidores OpenSSH recentes).
+          for f in dist-release/*; do
+            [ -f "$f" ] || continue
+            scp -O -o StrictHostKeyChecking=no "$f" "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/"
+          done
+          ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" "chown -R www-data:www-data /var/www/boracall/downloads && /usr/local/bin/boracall-update-symlinks"
 
   # ---------------------------------------------------------------------------
   # Release: gera SHA256SUMS global + cria GH Release draft (best-effort)
