@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>O BoraCall precisa do microfone pra você falar nas chamadas de voz.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Reservado pra quando o BoraCall suportar vídeo opcional.</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 BoraCall</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>app.boracall.desktop</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>boracall</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

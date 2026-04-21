@@ -1,0 +1,44 @@
+# BoraCall — dev infra.
+#
+# Usage on macOS (Colima as the Docker daemon):
+#   colima start --cpu 4 --memory 4 --disk 30
+#   docker compose up -d
+#
+# Linux / native Docker works the same way; no Colima step.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: boracall-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: boracall
+      POSTGRES_USER: boracall
+      POSTGRES_PASSWORD: boracall
+      # tune for dev: aggressive fsync off is fine for laptop iteration,
+      # the prod deployment should NOT copy this.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_cache_size=1GB"
+    ports:
+      - "5432:5432"
+    volumes:
+      - boracall-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "boracall", "-d", "boracall"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  boracall-pgdata:

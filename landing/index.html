@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BoraCall — chamada de voz sem enrolação</title>
+  <meta name="description" content="BoraCall é um app de chamada de voz em grupo, leve e sem distração. Cria uma sala, compartilha o link, pronto. Mac, Windows e Linux." />
+  <meta name="theme-color" content="#14151a" />
+  <link rel="icon" type="image/png" href="assets/mark.png" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="BoraCall — chamada de voz sem enrolação" />
+  <meta property="og:description" content="Cria uma sala, compartilha o link, pronto. Mac, Windows e Linux. Open source. 3MB." />
+  <meta property="og:url" content="https://boracall.com" />
+  <meta property="og:image" content="https://boracall.com/assets/og.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="#top">
+    <svg class="mark" viewBox="0 0 14 14" aria-hidden="true">
+      <rect x="0.5" y="0.5" width="13" height="13" fill="none" stroke="currentColor" />
+      <rect x="3" y="3" width="3" height="8" fill="currentColor" />
+      <rect x="8" y="5" width="3" height="4" fill="currentColor" />
+    </svg>
+    <span><b>bora</b>call</span>
+  </a>
+  <div class="nav-links">
+    <a href="#features">features</a>
+    <a href="#download">baixar</a>
+    <a href="https://github.com/boracall/boracall" target="_blank" rel="noopener">github</a>
+  </div>
+  <a href="#download" class="nav-cta">Baixar</a>
+</nav>
+
+<!-- ========================================================= HERO -->
+<section class="hero" id="top">
+  <div class="hero-inner">
+    <div class="hero-left">
+      <div class="pill"><span class="dot"></span>beta pública · v<span id="version">0.1.0</span></div>
+      <h1>Chamada de voz<br /><span class="amb">sem enrolação.</span></h1>
+      <p class="lede">
+        Cria uma sala, compartilha o link, pronto. Áudio limpo via WebRTC
+        P2P, interface que não atrapalha. Roda nativo no seu desktop.
+      </p>
+
+      <div class="cta-row">
+        <a id="primary-cta" href="#download" class="btn-primary">Baixar pra detectando…</a>
+        <a href="#download" class="btn-line">outras plataformas</a>
+      </div>
+
+      <div class="kvs">
+        <span>Latência</span><b>&lt; 50ms p50</b>
+        <span>Codec</span><b>Opus 48kHz</b>
+        <span>Tamanho</span><b>~3MB instalado</b>
+        <span>Custo</span><b>grátis até 4 pessoas</b>
+      </div>
+    </div>
+
+    <div class="hero-right" aria-hidden="true">
+      <div class="app-window">
+        <div class="app-chrome">
+          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+          <span class="title">BoraCall</span>
+        </div>
+        <div class="app-body">
+          <div class="row head">
+            <span>eng-weekly</span>
+            <span class="status">● ao vivo</span>
+          </div>
+          <div class="row"><span class="av">JP</span><span>João Pedro</span><span class="bars live"></span></div>
+          <div class="row speaking"><span class="av">MC</span><span>Maria Clara</span><span class="bars live"></span></div>
+          <div class="row"><span class="av">LF</span><span>Lucas Ferreira</span><span class="bars"></span></div>
+          <div class="row"><span class="av">AB</span><span>Ana Beatriz</span><span class="bars"></span></div>
+          <div class="row meta"><span>4 pessoas</span><span>42ms · 0.1%</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========================================================= FEATURES -->
+<section class="features" id="features">
+  <div class="features-inner">
+    <h2>Por que BoraCall</h2>
+
+    <div class="feature-grid">
+      <div class="feature">
+        <div class="f-icon">◊</div>
+        <h3>P2P de verdade</h3>
+        <p>Áudio flui direto entre os peers via WebRTC, com Opus 48kHz. Sem servidor intermediando a voz até 4 pessoas — latência mínima, zero custo por minuto.</p>
+      </div>
+      <div class="feature">
+        <div class="f-icon">▧</div>
+        <h3>Nativo nos 3 desktops</h3>
+        <p>Tauri + Rust. 3MB de binário. Abre em 200ms. Não é Electron, não sobe um Chromium do zero. Usa o webview do sistema.</p>
+      </div>
+      <div class="feature">
+        <div class="f-icon">⎔</div>
+        <h3>Sem fricção</h3>
+        <p>Criar sala = um clique. Entrar = colar o link. Sem lobby, sem PIN, sem convite na agenda. Você tá na call em 5 segundos.</p>
+      </div>
+      <div class="feature">
+        <div class="f-icon">▤</div>
+        <h3>Backend em Rust</h3>
+        <p>Signaling WebSocket em axum + tokio, Postgres 16. Stateless, escala horizontal. Binário único de 4MB — cabe em qualquer VPS.</p>
+      </div>
+      <div class="feature">
+        <div class="f-icon">⟠</div>
+        <h3>Atalhos de teclado</h3>
+        <p><kbd>M</kbd> mute · <kbd>SPACE</kbd> push-to-talk · <kbd>H</kbd> esconder UI · <kbd>ESC</kbd> sair. Modo "always on top" pra ficar visível enquanto você trabalha.</p>
+      </div>
+      <div class="feature">
+        <div class="f-icon">⌬</div>
+        <h3>Open source</h3>
+        <p>MIT. Código aberto no GitHub. Self-hostável no seu VPS em 5 minutos — Postgres, server, nginx + TLS. Sem lock-in.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========================================================= DOWNLOAD -->
+<section class="download" id="download">
+  <div class="download-inner">
+    <h2>Baixar BoraCall</h2>
+    <p class="lede">Grátis pra sempre. Sem conta pra instalar, sem telemetria.</p>
+
+    <div class="dl-grid">
+      <!-- ----- macOS -->
+      <div class="dl-card" data-os="mac">
+        <div class="dl-head">
+          <div class="dl-os">macOS</div>
+          <div class="dl-ver mono">v0.1.0 · 3.0MB</div>
+        </div>
+        <a href="https://boracall.com/downloads/BoraCall_0.1.0_aarch64.dmg" class="dl-primary">
+          <span>.dmg · Apple Silicon</span>
+          <span class="arrow">↓</span>
+        </a>
+        <a href="https://boracall.com/downloads/BoraCall_0.1.0_x86_64.dmg" class="dl-secondary">
+          .dmg · Intel (x86_64)
+        </a>
+        <div class="dl-note mono">macOS 11+ · sem certificado: clique direito → Abrir na primeira vez.</div>
+      </div>
+
+      <!-- ----- Windows -->
+      <div class="dl-card" data-os="win">
+        <div class="dl-head">
+          <div class="dl-os">Windows</div>
+          <div class="dl-ver mono">v0.1.0 · 4.2MB</div>
+        </div>
+        <a href="https://boracall.com/downloads/BoraCall_0.1.0_x64-setup.exe" class="dl-primary">
+          <span>.exe · Instalador</span>
+          <span class="arrow">↓</span>
+        </a>
+        <a href="https://boracall.com/downloads/BoraCall_0.1.0_x64_en-US.msi" class="dl-secondary">
+          .msi · MSI empresarial
+        </a>
+        <div class="dl-note mono">Windows 10/11 · WebView2 instala sozinho se faltar.</div>
+      </div>
+
+      <!-- ----- Linux -->
+      <div class="dl-card" data-os="linux">
+        <div class="dl-head">
+          <div class="dl-os">Linux</div>
+          <div class="dl-ver mono">v0.1.0 · 5.1MB</div>
+        </div>
+        <a href="https://boracall.com/downloads/BoraCall_0.1.0_amd64.AppImage" class="dl-primary">
+          <span>.AppImage · universal</span>
+          <span class="arrow">↓</span>
+        </a>
+        <a href="https://boracall.com/downloads/bora-call_0.1.0_amd64.deb" class="dl-secondary">
+          .deb · Debian/Ubuntu
+        </a>
+        <a href="https://boracall.com/downloads/bora-call-0.1.0-1.x86_64.rpm" class="dl-secondary">
+          .rpm · Fedora/RHEL
+        </a>
+        <div class="dl-note mono">Requer libwebkit2gtk-4.1 (vem no Ubuntu 23+ e Fedora 40+).</div>
+      </div>
+    </div>
+
+    <div class="dl-arm mono">
+      Também tem <a href="https://boracall.com/downloads/BoraCall_0.1.0_arm64.AppImage">Linux arm64</a> ·
+      <a href="https://boracall.com/downloads/BoraCall_0.1.0_arm64-setup.exe">Windows ARM</a> ·
+      <a href="https://github.com/boracall/boracall/releases">todas as versões no GitHub</a>.
+    </div>
+  </div>
+</section>
+
+<!-- ========================================================= HOW IT WORKS -->
+<section class="how" id="how">
+  <div class="how-inner">
+    <h2>Como funciona</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="s-num mono">01</div>
+        <h3>Instala</h3>
+        <p>Binário pequeno, não é Electron. 3-5MB dependendo do sistema. Abre direto, sem splash screen de 4 segundos.</p>
+      </div>
+      <div class="step">
+        <div class="s-num mono">02</div>
+        <h3>Cria sala</h3>
+        <p>Dá um nome, escolhe se é "rápida" (some sozinha quando esvazia) ou "fixa" (fica no seu workspace).</p>
+      </div>
+      <div class="step">
+        <div class="s-num mono">03</div>
+        <h3>Compartilha link</h3>
+        <p><code>boracall.com/s/ajaa1dxqpn</code>. Quem cola num chat, clica, e cai na call. Sem pedir cadastro pro convidado.</p>
+      </div>
+      <div class="step">
+        <div class="s-num mono">04</div>
+        <h3>Fala</h3>
+        <p>WebRTC mesh P2P. Servidor só faz signaling — a voz trafega direto entre vocês. Até 4 pessoas por sala.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========================================================= FAQ -->
+<section class="faq" id="faq">
+  <div class="faq-inner">
+    <h2>Perguntas frequentes</h2>
+
+    <details>
+      <summary>É mesmo grátis?</summary>
+      <p>É. Até 4 pessoas por sala, rodando P2P, sem custo por minuto. Acima disso a gente vai precisar de um SFU (servidor que agrega áudio) — aí provavelmente roda um plano pago. Pra call de time pequeno, nunca vai cobrar.</p>
+    </details>
+
+    <details>
+      <summary>Precisa criar conta?</summary>
+      <p>Sim pra criar salas. Não pra entrar numa sala que alguém compartilhou com você. Quem recebe o link só coloca um nome e entra.</p>
+    </details>
+
+    <details>
+      <summary>Vocês gravam as chamadas?</summary>
+      <p>Não. A voz nem passa pelo servidor — é P2P direto entre os peers. O server só conhece quem entrou em que sala. Logs de presença ficam 30 dias pra debug e são apagados.</p>
+    </details>
+
+    <details>
+      <summary>O app é open source?</summary>
+      <p>Sim, MIT. <a href="https://github.com/boracall/boracall">github.com/boracall/boracall</a>. Você pode auditar, rodar seu próprio server, ou fazer fork.</p>
+    </details>
+
+    <details>
+      <summary>E Windows e Linux de ARM?</summary>
+      <p>Tem. Link acima em "também tem…". Raspberry Pi 4+ e Asahi Linux rodam tranquilo. Windows ARM (Surface Pro X, etc.) também.</p>
+    </details>
+
+    <details>
+      <summary>Posso usar pra mobile?</summary>
+      <p>Ainda não — o Tauri tem build pra iOS/Android mas a gente não empacotou. Entrar numa call do navegador do celular funciona hoje (<code>boracall.com/s/&lt;slug&gt;</code> abre a PWA). App nativo mobile tá no roadmap.</p>
+    </details>
+
+    <details>
+      <summary>Como roda no meu próprio servidor?</summary>
+      <p>3 comandos numa VPS Ubuntu com Docker: clone o repo, <code>docker-compose up -d postgres</code>, <code>cargo run -p boracall-server --release</code>. Nginx na frente com TLS, <code>dist/env.js</code> apontando pro seu domínio. Guia completo no <a href="https://github.com/boracall/boracall/blob/main/HANDOFF.md">HANDOFF.md</a>.</p>
+    </details>
+  </div>
+</section>
+
+<!-- ========================================================= FOOTER -->
+<footer class="foot">
+  <div class="foot-inner">
+    <div class="foot-brand">
+      <svg class="mark" viewBox="0 0 14 14" aria-hidden="true">
+        <rect x="0.5" y="0.5" width="13" height="13" fill="none" stroke="currentColor" />
+        <rect x="3" y="3" width="3" height="8" fill="currentColor" />
+        <rect x="8" y="5" width="3" height="4" fill="currentColor" />
+      </svg>
+      <span><b>bora</b>call</span>
+    </div>
+    <div class="foot-cols">
+      <div>
+        <h4>Produto</h4>
+        <a href="#download">Baixar</a>
+        <a href="#features">Features</a>
+        <a href="#faq">FAQ</a>
+      </div>
+      <div>
+        <h4>Desenvolvedor</h4>
+        <a href="https://github.com/boracall/boracall">GitHub</a>
+        <a href="https://github.com/boracall/boracall/blob/main/HANDOFF.md">Docs</a>
+        <a href="https://github.com/boracall/boracall/releases">Releases</a>
+      </div>
+      <div>
+        <h4>Suporte</h4>
+        <a href="https://status.boracall.com">Status</a>
+        <a href="mailto:oi@boracall.com">oi@boracall.com</a>
+        <a href="/security">Segurança</a>
+      </div>
+    </div>
+  </div>
+  <div class="foot-bot mono">
+    © 2026 BoraCall · feito com Rust + WebRTC
+  </div>
+</footer>
+
+<script>
+  // Tiny inline: detect OS, point the primary CTA at the right download, mark the
+  // right download card as "recommended".
+  (function () {
+    function detectOS() {
+      const ua = (navigator.userAgent || "").toLowerCase();
+      const p  = (navigator.platform  || "").toLowerCase();
+      if (p.includes("mac") || ua.includes("mac"))      return "mac";
+      if (p.includes("win") || ua.includes("windows"))  return "win";
+      if (p.includes("linux") || ua.includes("linux"))  return "linux";
+      return null;
+    }
+    function detectMacArch() {
+      // Chrome on Apple Silicon reports "Intel" for privacy. Fall back to checking memory.
+      // This is best-effort; both .dmg variants are always listed explicitly below.
+      const ua = navigator.userAgent;
+      if (/arm64|aarch64/i.test(ua)) return "arm64";
+      return null; // unknown — default to Apple Silicon which is majority on new Macs
+    }
+
+    const LINKS = {
+      mac:   { label: "Baixar pra macOS",  href: "https://boracall.com/downloads/BoraCall_0.1.0_aarch64.dmg" },
+      win:   { label: "Baixar pra Windows",href: "https://boracall.com/downloads/BoraCall_0.1.0_x64-setup.exe" },
+      linux: { label: "Baixar pra Linux",  href: "https://boracall.com/downloads/BoraCall_0.1.0_amd64.AppImage" },
+    };
+
+    const os = detectOS();
+    const cta = document.getElementById("primary-cta");
+    if (cta) {
+      const l = (os && LINKS[os]) || LINKS.mac;
+      cta.textContent = l.label;
+      cta.href = l.href;
+    }
+    if (os) {
+      const card = document.querySelector('.dl-card[data-os="' + os + '"]');
+      if (card) card.classList.add("recommended");
+    }
+  })();
+</script>
+</body>
+</html>

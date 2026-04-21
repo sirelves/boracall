@@ -1,0 +1,37 @@
+# Build output
+/target/
+src-tauri/target/
+server/target/
+node_modules/
+
+# Rust
+**/*.rs.bk
+Cargo.lock.orig
+
+# Bundles (published via GH Releases + VPS, not git)
+*.dmg
+*.msi
+*.exe
+*.AppImage
+*.deb
+*.rpm
+
+# macOS
+.DS_Store
+
+# Env / secrets — never commit
+.env
+.env.*
+!.env.example
+server/boracall.db*
+*.sqlite*
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs + temp
+*.log
+/tmp/

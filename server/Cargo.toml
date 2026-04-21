@@ -1,0 +1,59 @@
+[package]
+name = "boracall-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "BoraCall backend — auth, rooms, and WebRTC signaling"
+
+[[bin]]
+name = "boracall-server"
+path = "src/main.rs"
+
+[dependencies]
+# HTTP + WebSocket
+axum = { version = "0.8", features = ["ws", "macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip", "timeout", "limit"] }
+
+# Async runtime
+tokio = { workspace = true }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures-util = "0.3"
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Database — Postgres 16. Rustls for TLS so the binary is musl/alpine friendly.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "migrate", "uuid", "chrono", "macros"] }
+
+# Auth
+argon2 = "0.5"
+jsonwebtoken = "9"
+rand = "0.8"
+rand_core = { version = "0.6", features = ["std"] }
+
+# IDs and time
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Config + errors + logging
+anyhow = "1"
+thiserror = "2"
+dotenvy = "0.15"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Validation
+validator = { version = "0.19", features = ["derive"] }
+
+# Cpu count for pool sizing
+num_cpus = "1"
+
+# Lock-free presence map (hub)
+dashmap = "6"
+parking_lot = "0.12"
+
+# Production allocator — default malloc is poor under load
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = "0.6"
