@@ -9,9 +9,9 @@ use crate::state::AppState;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, Query, State,
+        Path, State,
     },
-    http::StatusCode,
+    http::{header::SEC_WEBSOCKET_PROTOCOL, HeaderMap, StatusCode},
     response::IntoResponse,
 };
 use dashmap::DashMap;
@@ -164,22 +164,52 @@ impl Default for Hub {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP upgrade handler — `GET /ws/rooms/:slug?token=JWT`
+// HTTP upgrade handler — `GET /ws/rooms/:slug`
+//
+// Authentication: JWT travels as a WebSocket subprotocol, NOT a query param —
+// query strings end up in access logs, proxy logs, and browser history, which
+// leaks bearer tokens. The client does:
+//
+//     new WebSocket(url, ["bc.v1", "token." + jwt])
+//
+// and we echo back "bc.v1" as the accepted subprotocol. The server rejects
+// the upgrade if the token is missing or invalid.
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
-pub struct WsQuery {
-    pub token: String,
+const WS_PROTOCOL: &str = "bc.v1";
+const WS_TOKEN_PREFIX: &str = "token.";
+
+/// Pulls the JWT out of the Sec-WebSocket-Protocol header.
+/// The header can list multiple protocols comma-separated; we scan for one
+/// starting with `token.` and return the suffix.
+fn extract_token(headers: &HeaderMap) -> Option<String> {
+    for raw in headers.get_all(SEC_WEBSOCKET_PROTOCOL).iter() {
+        let Ok(s) = raw.to_str() else { continue };
+        for part in s.split(',') {
+            let p = part.trim();
+            if let Some(tok) = p.strip_prefix(WS_TOKEN_PREFIX) {
+                if !tok.is_empty() {
+                    return Some(tok.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 pub async fn ws_room(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
     Path(slug): Path<String>,
-    Query(q): Query<WsQuery>,
+    headers: HeaderMap,
 ) -> axum::response::Response {
+    let token = match extract_token(&headers) {
+        Some(t) => t,
+        None => return (StatusCode::UNAUTHORIZED, "missing token subprotocol").into_response(),
+    };
+
     // Validate JWT up front; reject before upgrading if we can.
-    let claims = match decode_token(&state.jwt_secret, &q.token) {
+    let claims = match decode_token(&state.jwt_secret, &token) {
         Ok(c) => c,
         Err(_) => return (StatusCode::UNAUTHORIZED, "invalid token").into_response(),
     };
@@ -188,9 +218,12 @@ pub async fn ws_room(
         Err(_) => return (StatusCode::UNAUTHORIZED, "bad subject").into_response(),
     };
 
-    // Validate the room exists. Ensure membership (auto-create on join for now).
+    // Load the room. Need password_hash to know if it's locked (can't trust the
+    // client to have called /join first for unlocked rooms — that would break
+    // the one-click invite flow — but for locked rooms, membership proves the
+    // password was validated).
     let room = match sqlx::query!(
-        "SELECT id FROM rooms WHERE slug = $1",
+        r#"SELECT id, (password_hash IS NOT NULL) AS "locked!" FROM rooms WHERE slug = $1"#,
         slug
     )
     .fetch_optional(&state.db)
@@ -201,14 +234,48 @@ pub async fn ws_room(
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response(),
     };
 
-    // Upsert membership (idempotent).
-    let _ = sqlx::query!(
-        "INSERT INTO memberships (room_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-        room.id,
-        user_id
-    )
-    .execute(&state.db)
-    .await;
+    // Locked rooms require a prior POST /rooms/:slug/join (which validates the
+    // password and creates the membership row). The WS never auto-creates
+    // membership for locked rooms — otherwise any JWT holder would bypass the
+    // password by opening the WS directly.
+    if room.locked {
+        let is_member = sqlx::query_scalar!(
+            r#"SELECT 1 AS "e!" FROM memberships WHERE room_id = $1 AND user_id = $2"#,
+            room.id,
+            user_id
+        )
+        .fetch_optional(&state.db)
+        .await
+        .map(|o| o.is_some())
+        .unwrap_or(false);
+        if !is_member {
+            return (StatusCode::FORBIDDEN, "room is locked — call /rooms/{slug}/join first")
+                .into_response();
+        }
+    } else {
+        // Unlocked rooms: auto-add membership on first WS connect (convenience).
+        let _ = sqlx::query!(
+            "INSERT INTO memberships (room_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            room.id,
+            user_id
+        )
+        .execute(&state.db)
+        .await;
+    }
+
+    // Peer cap per room. Prevents mesh topology DoS and accidental 20-person
+    // "rooms" that would saturate everyone's uplink.
+    // Allow the user to reconnect (same user_id already counted is deduped in
+    // add_peer), so we only reject when they would actually be a NEW peer.
+    let current = state.hub.slug_count(&slug);
+    let already_present = state.hub.has_peer(&slug, user_id);
+    if !already_present && current >= state.max_peers_per_room {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("room full (max {} peers)", state.max_peers_per_room),
+        )
+            .into_response();
+    }
 
     // Fetch display name (cheap, one query).
     let display_name = sqlx::query_scalar!(
@@ -221,7 +288,12 @@ pub async fn ws_room(
     .flatten()
     .flatten();
 
-    ws.on_upgrade(move |socket| handle_socket(socket, state, slug, user_id, display_name))
+    // Echo the accepted subprotocol back — the browser's WebSocket client
+    // rejects the handshake if we don't confirm one of the protocols it offered.
+    let response = ws
+        .protocols([WS_PROTOCOL])
+        .on_upgrade(move |socket| handle_socket(socket, state, slug, user_id, display_name));
+    response
 }
 
 async fn handle_socket(
@@ -390,6 +462,15 @@ impl Hub {
             .get(slug)
             .map(|r| r.peers.read().len())
             .unwrap_or(0)
+    }
+
+    /// True if `user_id` is currently listed as a peer in `slug`.
+    /// Used to distinguish "new peer would exceed cap" from "same user reconnecting".
+    pub fn has_peer(&self, slug: &str, user_id: Uuid) -> bool {
+        self.rooms
+            .get(slug)
+            .map(|r| r.peers.read().iter().any(|p| p.user_id == user_id))
+            .unwrap_or(false)
     }
 
     pub fn active_rooms(&self) -> usize {

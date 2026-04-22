@@ -52,6 +52,7 @@ async fn main() -> anyhow::Result<()> {
         jwt_ttl_days: cfg.jwt_ttl_days,
         otp,
         mailer,
+        max_peers_per_room: cfg.max_peers_per_room,
     };
 
     // ----------------------- routes -----------------------

@@ -3,10 +3,16 @@
 // Use: const rt = new window.Realtime(slug); rt.on("offer", ...); rt.connect();
 
 (function () {
-  function wsUrl(slug, token) {
+  // JWT travels as a WebSocket subprotocol — never as a query param, since
+  // URLs leak into proxy logs and browser history. The server extracts the
+  // token from Sec-WebSocket-Protocol and echoes back "bc.v1".
+  const WS_PROTOCOL = "bc.v1";
+  const WS_TOKEN_PREFIX = "token.";
+
+  function wsUrl(slug) {
     const api = (window.api && window.api.baseUrl()) || "http://127.0.0.1:3030";
     const wsBase = api.replace(/^http/, "ws");
-    return wsBase + "/ws/rooms/" + encodeURIComponent(slug) + "?token=" + encodeURIComponent(token);
+    return wsBase + "/ws/rooms/" + encodeURIComponent(slug);
   }
 
   class Realtime {

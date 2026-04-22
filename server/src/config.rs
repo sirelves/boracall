@@ -12,6 +12,9 @@ pub struct Config {
     pub log: String,
     pub resend_api_key: Option<String>,
     pub email_from: Option<String>,
+    /// Hard cap for concurrent peers in a single room.
+    /// Above ~5 the mesh topology saturates; this is the safety net before SFU lands.
+    pub max_peers_per_room: usize,
 }
 
 impl Config {
@@ -47,6 +50,12 @@ impl Config {
         let resend_api_key = std::env::var("BC_RESEND_API_KEY").ok().filter(|s| !s.is_empty());
         let email_from = std::env::var("BC_EMAIL_FROM").ok().filter(|s| !s.is_empty());
 
+        let max_peers_per_room: usize = std::env::var("BC_MAX_PEERS_PER_ROOM")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|n: &usize| *n >= 2)
+            .unwrap_or(6);
+
         Ok(Self {
             bind,
             database_url,
@@ -56,6 +65,7 @@ impl Config {
             log,
             resend_api_key,
             email_from,
+            max_peers_per_room,
         })
     }
 }
