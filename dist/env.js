@@ -1,7 +1,7 @@
 // BoraCall — runtime env bag. Overridden at deploy time (CI can rewrite this
 // file before packaging) to point the desktop at a production backend.
 //
-// Production build: points at the VPS backend (<REDACTED_IP> / boracall.com).
+// Production build: points at the public VPS backend (boracall.com, behind Cloudflare).
 // For local dev, set window.BC_API_URL in devtools console to
 // "http://127.0.0.1:3030" before the page boots, or rebuild with that value.
 (function () {
