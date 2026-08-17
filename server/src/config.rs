@@ -47,8 +47,12 @@ impl Config {
         let log = std::env::var("RUST_LOG")
             .unwrap_or_else(|_| "boracall_server=info,tower_http=info,sqlx=warn".to_string());
 
-        let resend_api_key = std::env::var("BC_RESEND_API_KEY").ok().filter(|s| !s.is_empty());
-        let email_from = std::env::var("BC_EMAIL_FROM").ok().filter(|s| !s.is_empty());
+        let resend_api_key = std::env::var("BC_RESEND_API_KEY")
+            .ok()
+            .filter(|s| !s.is_empty());
+        let email_from = std::env::var("BC_EMAIL_FROM")
+            .ok()
+            .filter(|s| !s.is_empty());
 
         let max_peers_per_room: usize = std::env::var("BC_MAX_PEERS_PER_ROOM")
             .ok()

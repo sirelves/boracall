@@ -13,8 +13,6 @@ pub type AppResult<T> = Result<T, AppError>;
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("{0}")]
-    BadRequest(String),
-    #[error("{0}")]
     Unauthorized(String),
     #[error("{0}")]
     Forbidden(String),
@@ -37,14 +35,15 @@ pub enum AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, code) = match &self {
-            AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             AppError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
             AppError::Forbidden(_) => (StatusCode::FORBIDDEN, "forbidden"),
             AppError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             AppError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             AppError::Validation(_) => (StatusCode::UNPROCESSABLE_ENTITY, "validation"),
             AppError::Db(sqlx::Error::RowNotFound) => (StatusCode::NOT_FOUND, "not_found"),
-            AppError::Db(_) | AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
+            AppError::Db(_) | AppError::Internal(_) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal")
+            }
             AppError::Argon(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
             AppError::Jwt(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
         };
@@ -58,7 +57,9 @@ impl IntoResponse for AppError {
 
         let message = match &self {
             AppError::Db(sqlx::Error::RowNotFound) => "not found".to_string(),
-            AppError::Db(_) | AppError::Internal(_) | AppError::Argon(_) => "internal error".to_string(),
+            AppError::Db(_) | AppError::Internal(_) | AppError::Argon(_) => {
+                "internal error".to_string()
+            }
             AppError::Jwt(_) => "unauthorized".to_string(),
             other => other.to_string(),
         };

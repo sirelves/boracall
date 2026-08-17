@@ -7,10 +7,10 @@ use argon2::{
     Argon2,
 };
 use axum::{
+    extract::Request,
     extract::{FromRef, FromRequestParts, State},
     http::{header::AUTHORIZATION, request::Parts},
     middleware::Next,
-    extract::Request,
     response::Response,
 };
 use chrono::{Duration, Utc};
@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
-    pub sub: String,   // user id
+    pub sub: String, // user id
     pub email: String,
     pub iat: i64,
     pub exp: i64,

@@ -8,8 +8,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 pub async fn connect(url: &str) -> anyhow::Result<PgPool> {
-    let mut opts = PgConnectOptions::from_str(url)?
-        .application_name("boracall-server");
+    let mut opts = PgConnectOptions::from_str(url)?.application_name("boracall-server");
 
     // Keep server logs clean — per-statement noise at debug level.
     opts = opts.log_statements(tracing::log::LevelFilter::Debug);
