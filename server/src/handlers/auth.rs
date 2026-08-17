@@ -211,13 +211,10 @@ pub async fn request_password_reset(
     body.validate()?;
     let email = body.email.trim().to_lowercase();
 
-    let exists = sqlx::query_scalar!(
-        r#"SELECT 1 AS "e!" FROM users WHERE email = $1"#,
-        email
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .is_some();
+    let exists = sqlx::query_scalar!(r#"SELECT 1 AS "e!" FROM users WHERE email = $1"#, email)
+        .fetch_optional(&state.db)
+        .await?
+        .is_some();
 
     if exists {
         let code = state.otp.issue_reset(&email);

@@ -17,7 +17,6 @@ use axum::{
 use dashmap::DashMap;
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
@@ -33,7 +32,10 @@ pub enum ClientMsg {
     /// Peer-to-peer answer, targeted at a single user in the room.
     Answer { to: Uuid, sdp: String },
     /// ICE candidate for a given peer.
-    Ice { to: Uuid, candidate: serde_json::Value },
+    Ice {
+        to: Uuid,
+        candidate: serde_json::Value,
+    },
     /// Local mute state broadcast.
     Mute { muted: bool },
     /// Local "I'm speaking" pulse — coalesce on the client before emitting.
@@ -48,20 +50,43 @@ pub enum ClientMsg {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMsg {
     /// Full snapshot on join — who's already in the room.
-    Presence { peers: Vec<Peer> },
+    Presence {
+        peers: Vec<Peer>,
+    },
     /// A new peer entered.
-    Joined { peer: Peer },
+    Joined {
+        peer: Peer,
+    },
     /// A peer disconnected.
-    Left { user_id: Uuid },
+    Left {
+        user_id: Uuid,
+    },
     /// Relayed signaling from another peer.
-    Offer { from: Uuid, sdp: String },
-    Answer { from: Uuid, sdp: String },
-    Ice { from: Uuid, candidate: serde_json::Value },
+    Offer {
+        from: Uuid,
+        sdp: String,
+    },
+    Answer {
+        from: Uuid,
+        sdp: String,
+    },
+    Ice {
+        from: Uuid,
+        candidate: serde_json::Value,
+    },
     /// Presence changes.
-    Mute { user_id: Uuid, muted: bool },
-    Speaking { user_id: Uuid, level: f32 },
+    Mute {
+        user_id: Uuid,
+        muted: bool,
+    },
+    Speaking {
+        user_id: Uuid,
+        level: f32,
+    },
     /// Errors reported back to the client.
-    Error { message: String },
+    Error {
+        message: String,
+    },
     Pong,
 }
 
@@ -249,7 +274,10 @@ pub async fn ws_room(
         .map(|o| o.is_some())
         .unwrap_or(false);
         if !is_member {
-            return (StatusCode::FORBIDDEN, "room is locked — call /rooms/{slug}/join first")
+            return (
+                StatusCode::FORBIDDEN,
+                "room is locked — call /rooms/{slug}/join first",
+            )
                 .into_response();
         }
     } else {
@@ -278,22 +306,17 @@ pub async fn ws_room(
     }
 
     // Fetch display name (cheap, one query).
-    let display_name = sqlx::query_scalar!(
-        "SELECT display_name FROM users WHERE id = $1",
-        user_id
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .flatten();
+    let display_name = sqlx::query_scalar!("SELECT display_name FROM users WHERE id = $1", user_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .flatten();
 
     // Echo the accepted subprotocol back — the browser's WebSocket client
     // rejects the handshake if we don't confirm one of the protocols it offered.
-    let response = ws
-        .protocols([WS_PROTOCOL])
-        .on_upgrade(move |socket| handle_socket(socket, state, slug, user_id, display_name));
-    response
+    ws.protocols([WS_PROTOCOL])
+        .on_upgrade(move |socket| handle_socket(socket, state, slug, user_id, display_name))
 }
 
 async fn handle_socket(
@@ -449,9 +472,6 @@ async fn handle_socket(
         tracing::debug!(%slug, "room emptied and reclaimed");
     }
 }
-
-// Re-export types used in the Hub.
-pub use self::Peer as PeerInfo;
 
 // Expose Hub::clone-via-Arc by just wrapping in Arc where we use it.
 

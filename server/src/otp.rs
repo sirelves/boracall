@@ -19,7 +19,9 @@ pub struct OtpStore {
 
 impl OtpStore {
     pub fn new() -> Self {
-        Self { inner: Arc::new(DashMap::new()) }
+        Self {
+            inner: Arc::new(DashMap::new()),
+        }
     }
 
     fn key(purpose: &str, email: &str) -> String {
@@ -30,8 +32,10 @@ impl OtpStore {
         let code: String = (0..digits)
             .map(|_| rand::thread_rng().gen_range(0..10).to_string())
             .collect();
-        self.inner
-            .insert(Self::key(purpose, email), (code.clone(), Instant::now() + ttl));
+        self.inner.insert(
+            Self::key(purpose, email),
+            (code.clone(), Instant::now() + ttl),
+        );
         code
     }
 

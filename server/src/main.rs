@@ -15,6 +15,7 @@ mod signaling;
 mod state;
 
 use axum::{
+    http::StatusCode,
     routing::{get, patch, post},
     Router,
 };
@@ -66,7 +67,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/login", post(handlers::auth::login))
         .route("/auth/request-otp", post(handlers::auth::request_otp))
         .route("/auth/verify-otp", post(handlers::auth::verify_otp))
-        .route("/auth/request-password-reset", post(handlers::auth::request_password_reset))
+        .route(
+            "/auth/request-password-reset",
+            post(handlers::auth::request_password_reset),
+        )
         .route("/auth/reset-password", post(handlers::auth::reset_password))
         .route("/auth/me", get(handlers::auth::me))
         .route("/auth/me", patch(handlers::auth::update_me))
@@ -92,7 +96,10 @@ async fn main() -> anyhow::Result<()> {
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
                 .layer(CompressionLayer::new())
-                .layer(TimeoutLayer::new(Duration::from_secs(30)))
+                .layer(TimeoutLayer::with_status_code(
+                    StatusCode::REQUEST_TIMEOUT,
+                    Duration::from_secs(30),
+                ))
                 .layer(cors),
         );
 
@@ -110,7 +117,9 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn shutdown_signal() {
-    let ctrl_c = async { tokio::signal::ctrl_c().await.ok(); };
+    let ctrl_c = async {
+        tokio::signal::ctrl_c().await.ok();
+    };
     #[cfg(unix)]
     let term = async {
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
