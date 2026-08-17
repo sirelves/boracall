@@ -45,8 +45,17 @@ npm install && npm run dev        # app Tauri com hot reload
 - **rustfmt default** — rode `cargo fmt` antes de commitar.
 - **clippy limpo** — `cargo clippy --workspace --all-targets -- -D warnings`.
 - **Queries SQL** sempre via `sqlx::query!` / `query_as!` (não `query_unchecked`) —
-  o projeto depende do compile-time check. Se precisar rodar sem o banco vivo,
-  use `cargo sqlx prepare` pra snapshotar o schema em `.sqlx/`.
+  o projeto depende do compile-time check.
+- **Cache offline do sqlx**: o diretório `.sqlx/` é **commitado**. Com ele,
+  `SQLX_OFFLINE=true cargo build -p boracall-server` compila sem Postgres nenhum
+  (é assim que o CI roda). **Sempre que você criar ou alterar uma query**, regenere
+  com o banco no ar e commite junto:
+
+  ```bash
+  cargo sqlx prepare --workspace -- -p boracall-server
+  ```
+
+  O job `sqlx-cache` do CI roda `cargo sqlx prepare --check` e falha se você esquecer.
 - **Erros novos** entram em `error.rs` com variant tipada, nunca `anyhow::Error`
   escapando pra handler.
 - **Logs**: `tracing::info!` / `warn!` / `error!`. Não use `println!`.
