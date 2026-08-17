@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE users SET email_verified = TRUE WHERE id = $1\n        RETURNING id, email::text as \"email!\", display_name, email_verified\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "email!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "email_verified",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      true,
+      false
+    ]
+  },
+  "hash": "7f1bb098cc8e777654055ab85578539fb59e8cf0f79b1bdd6717c41284566b9c"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE rooms SET last_active_at = NOW() WHERE slug = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "42b3c5ff6aed681015245968f41a5da4bcd32f2846720dfa2c5e912bd6abbdfa"
+}

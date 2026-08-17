@@ -1,0 +1,51 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, email::text as \"email!\", password_hash, display_name, email_verified\n        FROM users WHERE email = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "email!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "password_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "email_verified",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "citext",
+            "kind": "Simple"
+          }
+        }
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "f32f1edf5d02daadee3b5cdf93ddfafd9e1dbd36ecec491398b7abb7a515842c"
+}
