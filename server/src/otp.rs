@@ -68,3 +68,101 @@ impl OtpStore {
         self.verify_n("reset", email, code)
     }
 }
+
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EMAIL: &str = "pessoa@exemplo.com";
+
+    #[test]
+    fn codigo_de_verificacao_tem_6_digitos() {
+        let code = OtpStore::new().issue(EMAIL);
+        assert_eq!(code.len(), 6);
+        assert!(code.chars().all(|c| c.is_ascii_digit()), "veio: {code}");
+    }
+
+    #[test]
+    fn codigo_de_reset_tem_8_digitos() {
+        let code = OtpStore::new().issue_reset(EMAIL);
+        assert_eq!(code.len(), 8);
+        assert!(code.chars().all(|c| c.is_ascii_digit()), "veio: {code}");
+    }
+
+    #[test]
+    fn codigo_valido_passa_uma_vez_so() {
+        let store = OtpStore::new();
+        let code = store.issue(EMAIL);
+
+        assert!(
+            store.verify(EMAIL, &code),
+            "primeira verificação deve passar"
+        );
+        assert!(
+            !store.verify(EMAIL, &code),
+            "código é de uso único — a segunda tem que falhar"
+        );
+    }
+
+    #[test]
+    fn codigo_errado_nao_passa_e_nao_consome_o_certo() {
+        let store = OtpStore::new();
+        let code = store.issue(EMAIL);
+        let errado = if code == "000000" { "111111" } else { "000000" };
+
+        assert!(!store.verify(EMAIL, errado));
+        assert!(
+            store.verify(EMAIL, &code),
+            "tentativa errada não pode invalidar o código legítimo"
+        );
+    }
+
+    #[test]
+    fn email_e_case_insensitive() {
+        let store = OtpStore::new();
+        let code = store.issue("Pessoa@Exemplo.COM");
+        assert!(store.verify("pessoa@exemplo.com", &code));
+    }
+
+    #[test]
+    fn codigo_de_outro_email_nao_serve() {
+        let store = OtpStore::new();
+        let code = store.issue(EMAIL);
+        assert!(!store.verify("outra@exemplo.com", &code));
+    }
+
+    #[test]
+    fn verify_e_reset_nao_se_consomem() {
+        let store = OtpStore::new();
+        let verify_code = store.issue(EMAIL);
+        let reset_code = store.issue_reset(EMAIL);
+
+        // O código de verificação não vale como reset de senha, nem o contrário.
+        assert!(!store.verify_reset(EMAIL, &verify_code));
+        assert!(!store.verify(EMAIL, &reset_code));
+
+        // E cada um continua válido no seu próprio namespace.
+        assert!(store.verify(EMAIL, &verify_code));
+        assert!(store.verify_reset(EMAIL, &reset_code));
+    }
+
+    #[test]
+    fn codigo_expirado_nao_passa() {
+        let store = OtpStore::new();
+        // TTL zero → já nasce expirado. Evita sleep no teste.
+        let code = store.issue_n("verify", EMAIL, 6, Duration::from_secs(0));
+        assert!(!store.verify(EMAIL, &code));
+    }
+
+    #[test]
+    fn reemitir_substitui_o_codigo_anterior() {
+        let store = OtpStore::new();
+        let antigo = store.issue(EMAIL);
+        let novo = store.issue(EMAIL);
+
+        assert!(!store.verify(EMAIL, &antigo), "código antigo deve morrer");
+        assert!(store.verify(EMAIL, &novo));
+    }
+}

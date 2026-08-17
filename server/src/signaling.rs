@@ -110,6 +110,22 @@ struct Envelope {
     payload: ServerMsg,
 }
 
+/// Decide se um envelope na broadcast da sala deve ser entregue ao socket de `me`.
+///
+/// Duas regras, nesta ordem:
+/// 1. Ninguém recebe eco do que enviou — a não ser que a mensagem seja
+///    endereçada a si mesmo (caso dos erros que o servidor devolve ao remetente).
+/// 2. Envelope com `target` só chega em quem é o alvo; sem `target`, é broadcast.
+fn should_deliver(env: &Envelope, me: Uuid) -> bool {
+    if env.origin == me && env.target != Some(me) {
+        return false;
+    }
+    match env.target {
+        Some(t) => t == me,
+        None => true,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Hub — owns per-room channels.
 // ---------------------------------------------------------------------------
@@ -363,18 +379,10 @@ async fn handle_socket(
     .await;
 
     // --- forward task: pull from broadcast, push to this socket ----------
-    let forward_slug = slug.clone();
     let mut forward = tokio::spawn(async move {
         while let Ok(env) = rx.recv().await {
-            // Filter: drop messages we originated (no echo) — unless targeted at us.
-            if env.origin == user_id && env.target != Some(user_id) {
+            if !should_deliver(&env, user_id) {
                 continue;
-            }
-            // If targeted, only the target delivers.
-            if let Some(t) = env.target {
-                if t != user_id {
-                    continue;
-                }
             }
             let body = match serde_json::to_string(&env.payload) {
                 Ok(s) => s,
@@ -384,7 +392,6 @@ async fn handle_socket(
                 break;
             }
         }
-        let _ = forward_slug; // lint silencer
     });
 
     // --- ingest loop: read from socket, fan out via broadcast ------------
@@ -499,3 +506,201 @@ impl Hub {
 }
 
 // Make Arc<Hub> cloneable in handler arg lists via standard Arc clone.
+
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    fn peer(id: Uuid) -> Peer {
+        Peer {
+            user_id: id,
+            display_name: Some("fulano".into()),
+            muted: false,
+        }
+    }
+
+    fn envelope(origin: Uuid, target: Option<Uuid>) -> Envelope {
+        Envelope {
+            target,
+            origin,
+            payload: ServerMsg::Left { user_id: origin },
+        }
+    }
+
+    fn headers_with(protocols: &[&str]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for p in protocols {
+            h.append(SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_str(p).unwrap());
+        }
+        h
+    }
+
+    // --- autenticação no handshake ----------------------------------------
+
+    #[test]
+    fn token_sai_do_subprotocol() {
+        let h = headers_with(&["bc.v1, token.abc123"]);
+        assert_eq!(extract_token(&h).as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn token_e_encontrado_em_qualquer_posicao_da_lista() {
+        let h = headers_with(&["token.xyz, bc.v1"]);
+        assert_eq!(extract_token(&h).as_deref(), Some("xyz"));
+    }
+
+    #[test]
+    fn token_e_encontrado_em_headers_repetidos() {
+        // Cliente pode mandar Sec-WebSocket-Protocol em linhas separadas.
+        let h = headers_with(&["bc.v1", "token.dois"]);
+        assert_eq!(extract_token(&h).as_deref(), Some("dois"));
+    }
+
+    #[test]
+    fn sem_token_no_subprotocol_retorna_none() {
+        assert_eq!(extract_token(&headers_with(&["bc.v1"])), None);
+        assert_eq!(extract_token(&HeaderMap::new()), None);
+    }
+
+    #[test]
+    fn prefixo_token_vazio_nao_conta_como_token() {
+        // "token." sozinho não é credencial — não pode virar Some("").
+        assert_eq!(extract_token(&headers_with(&["bc.v1, token."])), None);
+    }
+
+    #[test]
+    fn jwt_com_pontos_sobrevive_ao_parse() {
+        // JWT tem 3 partes separadas por ponto; o prefixo é "token." e o resto
+        // precisa voltar inteiro.
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.assinatura-aqui";
+        let h = headers_with(&[&format!("bc.v1, token.{jwt}")]);
+        assert_eq!(extract_token(&h).as_deref(), Some(jwt));
+    }
+
+    // --- roteamento de mensagens ------------------------------------------
+
+    #[test]
+    fn broadcast_chega_em_todo_mundo_menos_em_quem_enviou() {
+        let eu = Uuid::new_v4();
+        let outro = Uuid::new_v4();
+        let env = envelope(outro, None);
+
+        assert!(
+            should_deliver(&env, eu),
+            "broadcast de terceiro deve chegar"
+        );
+        assert!(
+            !should_deliver(&envelope(eu, None), eu),
+            "ninguém recebe eco do próprio broadcast"
+        );
+    }
+
+    #[test]
+    fn mensagem_direcionada_so_chega_no_alvo() {
+        let alvo = Uuid::new_v4();
+        let outro = Uuid::new_v4();
+        let remetente = Uuid::new_v4();
+        let env = envelope(remetente, Some(alvo));
+
+        assert!(should_deliver(&env, alvo));
+        assert!(
+            !should_deliver(&env, outro),
+            "SDP/ICE de outro par não pode vazar pra sala inteira"
+        );
+    }
+
+    #[test]
+    fn mensagem_do_servidor_pro_proprio_remetente_chega() {
+        // Caso do ServerMsg::Error: origin == target == eu. A regra do "sem eco"
+        // não pode engolir essa.
+        let eu = Uuid::new_v4();
+        assert!(should_deliver(&envelope(eu, Some(eu)), eu));
+    }
+
+    // --- Hub / presença ----------------------------------------------------
+
+    #[test]
+    fn sala_nasce_no_get_or_create_e_some_quando_esvazia() {
+        let hub = Hub::new();
+        let id = Uuid::new_v4();
+
+        hub.get_or_create("sala1");
+        hub.add_peer("sala1", peer(id));
+        assert_eq!(hub.active_rooms(), 1);
+        assert_eq!(hub.slug_count("sala1"), 1);
+
+        assert!(hub.remove_peer("sala1", id), "último a sair derruba a sala");
+        assert_eq!(hub.active_rooms(), 0);
+        assert_eq!(hub.slug_count("sala1"), 0);
+    }
+
+    #[test]
+    fn sala_com_gente_dentro_nao_e_derrubada() {
+        let hub = Hub::new();
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        hub.get_or_create("sala2");
+        hub.add_peer("sala2", peer(a));
+        hub.add_peer("sala2", peer(b));
+
+        assert!(!hub.remove_peer("sala2", a), "ainda tem gente na sala");
+        assert_eq!(hub.slug_count("sala2"), 1);
+        assert!(hub.has_peer("sala2", b));
+        assert!(!hub.has_peer("sala2", a));
+    }
+
+    #[test]
+    fn reconexao_do_mesmo_usuario_nao_duplica_presenca() {
+        let hub = Hub::new();
+        let id = Uuid::new_v4();
+        hub.get_or_create("sala3");
+
+        hub.add_peer("sala3", peer(id));
+        hub.add_peer("sala3", peer(id));
+
+        assert_eq!(
+            hub.slug_count("sala3"),
+            1,
+            "reconectar não pode contar duas vezes — isso furaria o cap de peers"
+        );
+    }
+
+    #[test]
+    fn add_peer_em_sala_inexistente_e_no_op() {
+        // add_peer depende do get_or_create ter rodado antes (é o que o
+        // handshake faz). Sem isso, some silenciosamente.
+        let hub = Hub::new();
+        hub.add_peer("nunca-criada", peer(Uuid::new_v4()));
+        assert_eq!(hub.slug_count("nunca-criada"), 0);
+        assert_eq!(hub.active_rooms(), 0);
+    }
+
+    #[test]
+    fn set_muted_reflete_no_snapshot_de_presenca() {
+        let hub = Hub::new();
+        let id = Uuid::new_v4();
+        hub.get_or_create("sala4");
+        hub.add_peer("sala4", peer(id));
+
+        hub.set_muted("sala4", id, true);
+        let snapshot = hub.presence("sala4");
+        assert_eq!(snapshot.len(), 1);
+        assert!(snapshot[0].muted);
+    }
+
+    #[test]
+    fn salas_sao_isoladas_entre_si() {
+        let hub = Hub::new();
+        let a = Uuid::new_v4();
+        hub.get_or_create("sala-a");
+        hub.get_or_create("sala-b");
+        hub.add_peer("sala-a", peer(a));
+
+        assert!(hub.has_peer("sala-a", a));
+        assert!(!hub.has_peer("sala-b", a));
+        assert_eq!(hub.active_rooms(), 2);
+    }
+}
