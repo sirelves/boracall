@@ -265,3 +265,49 @@ pub async fn join_room(
         live,
     }))
 }
+
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn slug_tem_5_chars() {
+        for _ in 0..200 {
+            assert_eq!(random_slug().chars().count(), 5);
+        }
+    }
+
+    #[test]
+    fn slug_nao_usa_chars_ambiguos() {
+        // 0/o, 1/l/i são os pares que o usuário erra ao digitar um link ditado
+        // por voz ou lido de um print.
+        let proibidos: HashSet<char> = "01loi".chars().collect();
+        for _ in 0..500 {
+            let slug = random_slug();
+            for c in slug.chars() {
+                assert!(
+                    !proibidos.contains(&c),
+                    "char ambíguo {c:?} apareceu no slug {slug:?}"
+                );
+                assert!(
+                    c.is_ascii_lowercase() || c.is_ascii_digit(),
+                    "char inesperado {c:?} no slug {slug:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn slug_varia_entre_chamadas() {
+        // Não é teste de qualidade de RNG — só pega o caso de constante hardcoded.
+        let amostras: HashSet<String> = (0..100).map(|_| random_slug()).collect();
+        assert!(
+            amostras.len() > 90,
+            "esperado ~100 slugs distintos, veio {}",
+            amostras.len()
+        );
+    }
+}
