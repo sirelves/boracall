@@ -866,7 +866,7 @@ function Settings({ go, session, setSession, tweaks, setTweak }) {
         <button className="btn-ghost" onClick={() => go("app")}>← voltar</button>
       </div>
       <div className="set-tabs">
-        {[["perfil", "perfil"], ["preferencias", "preferências"], ["conta", "conta"]].map(([k, l]) => (
+        {[["perfil", "perfil"], ["preferencias", "preferências"], ["conta", "conta"], ["sobre", "sobre"]].map(([k, l]) => (
           <button key={k} className={`set-tab ${tab === k ? "on" : ""}`} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
@@ -894,6 +894,7 @@ function Settings({ go, session, setSession, tweaks, setTweak }) {
           </>
         )}
         {tab === "preferencias" && <TweaksPanel tweaks={tweaks} setTweak={setTweak} />}
+        {tab === "sobre" && <Sobre />}
         {tab === "conta" && (
           <>
             <div className="set-row">
@@ -920,7 +921,48 @@ function Settings({ go, session, setSession, tweaks, setTweak }) {
   );
 }
 
+/// Versão, plataforma e servidor — o que um relato de bug precisa informar.
+///
+/// Existe porque o template de bug do repositório mandava "veja em
+/// Configurações → Sobre", e essa tela não existia: quem foi relatar não tinha
+/// onde achar a versão.
+function Sobre() {
+  const d = window.desktop || {};
+  const [copiado, setCopiado] = useS2(false);
+
+  const linhas = [
+    ["versão", d.appVersion || "—"],
+    ["plataforma", d.isNative ? `${d.platform || "?"} ${d.arch || ""}`.trim() : "navegador"],
+    ["servidor", (window.BC_API_URL || "—").replace(/^https?:\/\//, "")],
+  ];
+
+  const copiar = () => {
+    const txt = linhas.map(([k, v]) => `${k}: ${v}`).join("\n");
+    const done = () => { setCopiado(true); setTimeout(() => setCopiado(false), 1600); };
+    if (d.clipboard && d.clipboard.writeText) d.clipboard.writeText(txt).then(done).catch(() => {});
+    else navigator.clipboard.writeText(txt).then(done).catch(() => {});
+  };
+
+  return (
+    <>
+      {linhas.map(([k, v]) => (
+        <div className="set-row" key={k}>
+          <div className="k">{k}</div>
+          <div className="mono">{v}</div>
+          <span />
+        </div>
+      ))}
+      <div className="set-row">
+        <div className="k">Relatar um problema
+          <span className="d">copie estes dados e cole no relato</span></div>
+        <span />
+        <button className="btn-line" onClick={copiar}>{copiado ? "copiado!" : "copiar dados"}</button>
+      </div>
+    </>
+  );
+}
+
 Object.assign(window, {
-  AppShell, ServerRail, ChannelList, TextChannel, Mensagem,
+  AppShell, Sobre, ServerRail, ChannelList, TextChannel, Mensagem,
   VoiceChannelPanel, VoiceBar, PrimeiroServidor, ModalSimples, CriarCanal, Convite, Settings,
 });

@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Security vulnerability
+  - name: Vulnerabilidade de segurança
     url: https://github.com/sirelves/boracall/security/advisories/new
-    about: Please report vulnerabilities privately via GitHub Security Advisories, not public issues.
-  - name: Question or discussion
+    about: Relate em privado por Security Advisory, nunca em issue pública. Veja SECURITY.md.
+  - name: Dúvida ou ideia solta
     url: https://github.com/sirelves/boracall/discussions
-    about: Open-ended questions, ideas, and help go in Discussions.
+    about: Perguntas, ideias e pedidos de ajuda vão em Discussions.

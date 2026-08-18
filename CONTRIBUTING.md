@@ -11,15 +11,24 @@ Abra uma **issue** primeiro descrevendo a ideia. Mudanças de arquitetura
 exigem alinhamento antes de virar código. Bug fixes pequenos e refactors
 localizados podem vir direto como PR.
 
-Áreas onde ajuda é especialmente bem-vinda:
+### Por onde começar
 
-- **TURN server** integration + docs (coturn config)
-- **SFU opcional** (LiveKit ou mediasoup) ao lado do Rust
-- **Testes E2E** com dois webviews headless falando entre si
-- **QA de Windows e Linux** — codecs WebRTC variam por webview
-- **Acessibilidade** — screen reader no fluxo de call
-- **Translations** (hoje só PT-BR)
-- **Observabilidade** — OpenTelemetry + metrics Prometheus
+Procure a etiqueta [`good first issue`](https://github.com/sirelves/boracall/labels/good%20first%20issue):
+são tarefas de escopo fechado, com o arquivo e a abordagem já indicados no corpo
+da issue.
+
+Áreas onde ajuda é especialmente bem-vinda hoje:
+
+- **QA de Windows e Linux** — os codecs de WebRTC variam por webview, e o
+  projeto é desenvolvido no macOS. Achar o que quebra fora dele vale muito.
+- **SFU opcional** (LiveKit ou mediasoup) — hoje a chamada é mesh P2P e satura
+  acima de ~6 pessoas por canal
+- **Acessibilidade** — leitor de tela no fluxo de chamada
+- **Tradução** — hoje só PT-BR
+- **Observabilidade** — OpenTelemetry, métricas Prometheus
+
+Já resolvidos, não precisa: TURN (existe, com credencial efêmera) e testes
+ponta a ponta de voz (`scripts/smoke-*.mjs`).
 
 ---
 
@@ -35,6 +44,26 @@ docker compose up -d              # Postgres 16
 cargo run -p boracall-server      # backend
 npm install && npm run dev        # app Tauri com hot reload
 ```
+
+**Só quer mexer no backend sem subir banco?** Dá:
+
+```bash
+SQLX_OFFLINE=true cargo build -p boracall-server
+SQLX_OFFLINE=true cargo test  -p boracall-server
+```
+
+O `.sqlx/` commitado tem o retrato das queries. Banco só é necessário pra rodar
+os testes de integração (`-- --ignored`) e pra regerar esse cache.
+
+**Mexendo no front?** O `dist/` é HTML e JSX servidos direto, sem build. Editou,
+recarregou. Se preferir o navegador ao app nativo:
+
+```bash
+cd dist && python3 -m http.server 5174
+```
+
+O `dist/env.js` aponta pro backend local por padrão — não mexa nele achando que
+precisa apontar pra produção; o build de release reescreve esse arquivo sozinho.
 
 ---
 
@@ -73,7 +102,8 @@ npm install && npm run dev        # app Tauri com hot reload
 
 ### Commits
 
-Mensagens em PT-BR ou EN, como preferir. Formato livre, mas prefira **imperativo**
+Mensagens em PT-BR ou EN, como preferir — o projeto é escrito em português,
+mas ninguém vai recusar contribuição por causa do idioma do commit. Formato livre, mas prefira **imperativo**
 e uma linha curta de resumo:
 
 ```
