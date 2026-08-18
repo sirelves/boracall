@@ -14,5 +14,9 @@ pub struct AppState {
     pub jwt_ttl_days: i64,
     pub otp: OtpStore,
     pub mailer: Mailer,
+    pub stun_urls: Vec<String>,
+    pub turn_urls: Vec<String>,
+    pub turn_secret: Option<Arc<String>>,
+    pub turn_ttl_secs: i64,
     pub max_peers_per_channel: usize,
 }

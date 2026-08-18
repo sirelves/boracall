@@ -132,6 +132,10 @@ mod tests {
             jwt_ttl_days: ttl_days,
             otp: OtpStore::new(),
             mailer: Mailer::new(None, None),
+            stun_urls: vec!["stun:stun.l.google.com:19302".into()],
+            turn_urls: Vec::new(),
+            turn_secret: None,
+            turn_ttl_secs: 3600,
             max_peers_per_channel: 6,
         }
     }

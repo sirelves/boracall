@@ -183,6 +183,23 @@
     return m ? m[1] : null;
   }
 
+  // ----- WebRTC ------------------------------------------------------------
+  // A credencial de TURN é efêmera, então a resposta é cacheada só por alguns
+  // minutos — tempo suficiente pra não pedir a cada entrada em canal, curto o
+  // bastante pra não usar credencial vencida.
+  let _iceCache = null;
+  async function iceServers({ force = false } = {}) {
+    if (!force && _iceCache && Date.now() < _iceCache.validoAte) return _iceCache.valor;
+    const r = await request("/api/ice");
+    const valor = (r.ice_servers || []).map((s) => ({
+      urls: s.urls,
+      ...(s.username ? { username: s.username, credential: s.credential } : {}),
+    }));
+    const ttlMs = Math.max(60, (r.ttl || 3600) - 300) * 1000;
+    _iceCache = { valor, validoAte: Date.now() + ttlMs };
+    return valor;
+  }
+
   // ----- System ------------------------------------------------------------
   const health  = ()  => request("/api/health", { auth: false });
   const version = ()  => request("/api/version", { auth: false });
@@ -199,6 +216,8 @@
     listServers, createServer, getServer, joinServer, createChannel, getChannel,
     // mensagens
     listMessages, sendMessage, editMessage, deleteMessage, markRead,
+    // webrtc
+    iceServers,
     // util
     parseChannelLink, humanTime,
     // system

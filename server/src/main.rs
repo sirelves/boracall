@@ -54,6 +54,10 @@ async fn main() -> anyhow::Result<()> {
         jwt_ttl_days: cfg.jwt_ttl_days,
         otp,
         mailer,
+        stun_urls: cfg.stun_urls.clone(),
+        turn_urls: cfg.turn_urls.clone(),
+        turn_secret: cfg.turn_secret.clone().map(Arc::new),
+        turn_ttl_secs: cfg.turn_ttl_secs,
         max_peers_per_channel: cfg.max_peers_per_channel,
     };
 
@@ -85,6 +89,8 @@ async fn main() -> anyhow::Result<()> {
             post(handlers::servers::create_channel),
         )
         .route("/channels/{slug}", get(handlers::servers::get_channel))
+        // WebRTC
+        .route("/ice", get(handlers::ice::ice_servers))
         // mensagens
         .route(
             "/channels/{slug}/messages",
