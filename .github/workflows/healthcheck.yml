@@ -1,0 +1,114 @@
+name: healthcheck
+
+# Bate na API de produção de tempos em tempos e abre issue quando ela cai.
+#
+# Existe porque o backend já ficou fora do ar por um período indeterminado sem
+# ninguém notar (#1): o serviço estava parado E desabilitado no boot, e a única
+# forma de descobrir foi alguém ir olhar. Um cron que falha ruidosamente é o
+# mínimo pra que a próxima queda não passe em branco.
+#
+# Não substitui um uptime monitor de verdade (UptimeRobot, Better Stack), que
+# checa de vários pontos e avisa em minutos. O cron do GitHub Actions atrasa
+# quando a fila está cheia — trate o alarme como piso, não como SLA.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: healthcheck
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Bater no /api/health
+        id: probe
+        run: |
+          set +e
+          # Três tentativas antes de acusar: um 502 isolado do Cloudflare não é
+          # incidente, e alarme que grita à toa é alarme que se aprende a ignorar.
+          for i in 1 2 3; do
+            code=$(curl -s -o /tmp/corpo -w '%{http_code}' -m 10 https://api.boracall.com/api/health)
+            if [ "$code" = "200" ]; then
+              echo "status=up" >> "$GITHUB_OUTPUT"
+              echo "API no ar (tentativa $i)"
+              curl -s -m 10 https://api.boracall.com/api/version || true
+              exit 0
+            fi
+            echo "tentativa $i: http $code — $(head -c 200 /tmp/corpo)"
+            sleep 10
+          done
+          echo "status=down" >> "$GITHUB_OUTPUT"
+          echo "ultimo_code=$code" >> "$GITHUB_OUTPUT"
+          exit 1
+
+      - name: Abrir ou atualizar a issue de incidente
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marcador = '<!-- healthcheck-incidente -->';
+            const corpo = [
+              marcador,
+              '`https://api.boracall.com/api/health` não respondeu 200 em três tentativas.',
+              '',
+              `- Detectado em: ${new Date().toISOString()}`,
+              `- Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '',
+              'Primeiro lugar pra olhar, que foi a causa da última vez:',
+              '```',
+              'systemctl status boracall-server',
+              'journalctl -u boracall-server -n 100 --no-pager',
+              '```',
+              '',
+              'Esta issue é reaberta automaticamente enquanto a API estiver fora.',
+            ].join('\n');
+
+            const abertas = await github.rest.issues.listForRepo({
+              ...context.repo, state: 'open', labels: 'incidente',
+            });
+            const existente = abertas.data.find(i => i.body && i.body.includes(marcador));
+
+            if (existente) {
+              await github.rest.issues.createComment({
+                ...context.repo, issue_number: existente.number,
+                body: `Ainda fora — ${new Date().toISOString()}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                ...context.repo,
+                title: '🔴 API de produção fora do ar',
+                labels: ['incidente', 'P0'],
+                body: corpo,
+              });
+            }
+
+      - name: Fechar a issue de incidente quando voltar
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marcador = '<!-- healthcheck-incidente -->';
+            const abertas = await github.rest.issues.listForRepo({
+              ...context.repo, state: 'open', labels: 'incidente',
+            });
+            for (const i of abertas.data) {
+              if (i.body && i.body.includes(marcador)) {
+                await github.rest.issues.createComment({
+                  ...context.repo, issue_number: i.number,
+                  body: `API voltou — ${new Date().toISOString()}`,
+                });
+                await github.rest.issues.update({
+                  ...context.repo, issue_number: i.number, state: 'closed',
+                });
+              }
+            }

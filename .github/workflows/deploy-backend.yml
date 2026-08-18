@@ -1,0 +1,130 @@
+name: deploy-backend
+
+# Publica o boracall-server no VPS.
+#
+# Por que buildar no runner e não no VPS: o VPS é Ubuntu 24.04 x86_64 com glibc
+# 2.39, exatamente o que o runner `ubuntu-24.04` entrega. Compilar em produção
+# gastaria CPU de uma máquina que hospeda vários outros serviços, e deixaria o
+# toolchain Rust instalado lá só pra isso.
+#
+# O deploy é atômico e com rollback: sobe o binário ao lado do que está rodando,
+# troca, reinicia e confere o /api/health. Se o health não voltar, volta o
+# binário anterior e reinicia de novo — a falha some antes de virar downtime.
+#
+# As migrations rodam sozinhas no boot do server (db.rs), então não há passo
+# separado pra elas.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - '.sqlx/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+    inputs:
+      skip_backup:
+        description: 'Pular o backup do banco antes de reiniciar'
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  SQLX_OFFLINE: 'true'
+  DEST: /opt/boracall/bin/boracall-server
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: '.'
+          key: deploy-backend
+
+      - name: Build release
+        run: cargo build -p boracall-server --release --locked
+
+      - name: Checar o binário
+        run: |
+          ls -lah target/release/boracall-server
+          file target/release/boracall-server
+
+      - name: Install SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Trust VPS host key
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keyscan -T 20 -p 22 "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Backup do banco
+        if: ${{ !inputs.skip_backup }}
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          # Migration nova pode ser destrutiva. O dump sai ANTES de qualquer
+          # restart, e fica com o nome do commit que o gerou.
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "
+            set -e
+            mkdir -p /var/backups/boracall
+            sudo -u postgres pg_dump -Fc boracall \
+              > /var/backups/boracall/pre-${{ github.sha }}.dump
+            ls -lah /var/backups/boracall/pre-${{ github.sha }}.dump
+            # retém 14 dias
+            find /var/backups/boracall -name '*.dump' -mtime +14 -delete
+          "
+
+      - name: Enviar binário
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p /opt/boracall/bin"
+          scp target/release/boracall-server \
+            "$DEPLOY_USER@$DEPLOY_HOST:${DEST}.new"
+
+      - name: Trocar, reiniciar e verificar
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          scp scripts/deploy-swap.sh "$DEPLOY_USER@$DEPLOY_HOST:/tmp/deploy-swap.sh"
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "bash /tmp/deploy-swap.sh"
+
+      - name: Verificar de fora (pelo domínio público)
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          # O health interno já passou; este passo confere que nginx e Cloudflare
+          # estão entregando o que o processo responde.
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -m 10 https://api.boracall.com/api/health || true)
+            if [ "$code" = "200" ]; then
+              echo "público ok: $(curl -s -m 10 https://api.boracall.com/api/version)"
+              exit 0
+            fi
+            echo "tentativa $i: http $code"
+            sleep 5
+          done
+          echo "::error::api.boracall.com não respondeu 200 depois do deploy"
+          exit 1
