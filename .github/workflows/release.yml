@@ -131,36 +131,50 @@ jobs:
       # Coleta tudo que esse runner produziu num diretório uniforme pra upload.
       # Inclui instaladores (.dmg/.msi/.exe/.AppImage/.deb/.rpm) + artefatos do
       # updater (.app.tar.gz, .AppImage.tar.gz, .nsis.zip/.msi.zip) + .sig de cada.
+      # Coleta o que este runner produziu num diretório uniforme.
+      #
+      # Os artefatos do updater ganham prefixo da plataforma: os dois jobs de
+      # macOS geram "BoraCall.app.tar.gz" com o MESMO nome, e como todos sobem
+      # pro mesmo diretório do VPS, o segundo sobrescrevia o primeiro. O
+      # latest.json ficava com as duas arquiteturas apontando pro mesmo arquivo,
+      # com assinaturas diferentes — o updater de uma delas recusava a
+      # atualização por assinatura inválida, em silêncio.
       - name: Collect artifacts
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
+          PLAT: ${{ matrix.name }}
         run: |
           mkdir -p dist-release
-          shopt -s nullglob 2>/dev/null || true
           BUNDLE_ROOT="target/release/bundle"
-          if [ -n "$TARGET" ]; then
-            BUNDLE_ROOT="target/$TARGET/release/bundle"
-          fi
-          echo "Collecting from $BUNDLE_ROOT"
-          # Instaladores
-          cp "$BUNDLE_ROOT"/dmg/*.dmg           dist-release/ 2>/dev/null || true
-          cp "$BUNDLE_ROOT"/msi/*.msi           dist-release/ 2>/dev/null || true
-          cp "$BUNDLE_ROOT"/nsis/*.exe          dist-release/ 2>/dev/null || true
-          cp "$BUNDLE_ROOT"/appimage/*.AppImage dist-release/ 2>/dev/null || true
-          cp "$BUNDLE_ROOT"/deb/*.deb           dist-release/ 2>/dev/null || true
-          cp "$BUNDLE_ROOT"/rpm/*.rpm           dist-release/ 2>/dev/null || true
-          # Updater bundles + signatures (tauri gera ao lado dos instaladores)
-          cp "$BUNDLE_ROOT"/macos/*.app.tar.gz      dist-release/ 2>/dev/null || true
-          cp "$BUNDLE_ROOT"/macos/*.app.tar.gz.sig  dist-release/ 2>/dev/null || true
-          cp "$BUNDLE_ROOT"/msi/*.msi.zip           dist-release/ 2>/dev/null || true
-          cp "$BUNDLE_ROOT"/msi/*.msi.zip.sig       dist-release/ 2>/dev/null || true
-          cp "$BUNDLE_ROOT"/nsis/*.nsis.zip         dist-release/ 2>/dev/null || true
-          cp "$BUNDLE_ROOT"/nsis/*.nsis.zip.sig     dist-release/ 2>/dev/null || true
-          cp "$BUNDLE_ROOT"/appimage/*.AppImage.tar.gz     dist-release/ 2>/dev/null || true
-          cp "$BUNDLE_ROOT"/appimage/*.AppImage.tar.gz.sig dist-release/ 2>/dev/null || true
-          echo "== artifacts for ${{ matrix.name }} =="
-          ls -lah dist-release/ || true
+          if [ -n "$TARGET" ]; then BUNDLE_ROOT="target/$TARGET/release/bundle"; fi
+          echo "coletando de $BUNDLE_ROOT"
+
+          echo "== tudo que o bundle produziu =="
+          find "$BUNDLE_ROOT" -type f | sed 's|^|  |' || true
+
+          # Instaladores, com o nome que o Tauri deu.
+          for p in dmg/*.dmg msi/*.msi nsis/*.exe appimage/*.AppImage deb/*.deb rpm/*.rpm; do
+            for f in "$BUNDLE_ROOT"/$p; do
+              [ -f "$f" ] && cp "$f" dist-release/ && echo "instalador: $(basename "$f")"
+            done
+          done
+
+          # Artefatos do updater + assinatura, prefixados pela plataforma.
+          # A busca é por extensão em vez de caminho fixo pra não depender de
+          # onde cada versão do Tauri resolve colocá-los.
+          while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            cp "$f" "dist-release/${PLAT}-$(basename "$f")"
+            echo "updater: ${PLAT}-$(basename "$f")"
+          done < <(find "$BUNDLE_ROOT" -type f \( \
+                     -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' -o \
+                     -name '*.AppImage.tar.gz' -o -name '*.AppImage.tar.gz.sig' -o \
+                     -name '*.nsis.zip' -o -name '*.nsis.zip.sig' -o \
+                     -name '*.msi.zip' -o -name '*.msi.zip.sig' \) 2>/dev/null)
+
+          echo "== artefatos de ${PLAT} =="
+          ls -lah dist-release/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -206,7 +220,12 @@ jobs:
             echo "uploading: $f"
             scp -o StrictHostKeyChecking=no -o BatchMode=yes "$f" "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/"
           done
-          ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" "chown -R www-data:www-data /var/www/boracall/downloads && /usr/local/bin/boracall-update-symlinks"
+          scp -o StrictHostKeyChecking=no scripts/update-symlinks.sh \
+            "$DEPLOY_USER@$DEPLOY_HOST:/usr/local/bin/boracall-update-symlinks"
+          ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" "
+            chmod 755 /usr/local/bin/boracall-update-symlinks
+            chown -R www-data:www-data /var/www/boracall/downloads
+            /usr/local/bin/boracall-update-symlinks"
 
   # ---------------------------------------------------------------------------
   # Release: gera SHA256SUMS global + cria GH Release draft (best-effort)
@@ -289,17 +308,34 @@ jobs:
           }
 
           DARWIN_ARM=$(platform_json \
-            "$(find_one artifacts/boracall-macos-arm64 '*.app.tar.gz')" \
-            "$(find_one artifacts/boracall-macos-arm64 '*.app.tar.gz.sig')")
+            "$(find_one artifacts/boracall-macos-arm64 'macos-arm64-*.app.tar.gz')" \
+            "$(find_one artifacts/boracall-macos-arm64 'macos-arm64-*.app.tar.gz.sig')")
           DARWIN_X86=$(platform_json \
-            "$(find_one artifacts/boracall-macos-intel '*.app.tar.gz')" \
-            "$(find_one artifacts/boracall-macos-intel '*.app.tar.gz.sig')")
+            "$(find_one artifacts/boracall-macos-intel 'macos-intel-*.app.tar.gz')" \
+            "$(find_one artifacts/boracall-macos-intel 'macos-intel-*.app.tar.gz.sig')")
           LINUX_X86=$(platform_json \
-            "$(find_one artifacts/boracall-linux '*.AppImage.tar.gz')" \
-            "$(find_one artifacts/boracall-linux '*.AppImage.tar.gz.sig')")
+            "$(find_one artifacts/boracall-linux 'linux-*.AppImage.tar.gz')" \
+            "$(find_one artifacts/boracall-linux 'linux-*.AppImage.tar.gz.sig')")
           WIN_X86=$(platform_json \
-            "$(find_one artifacts/boracall-windows '*.nsis.zip')" \
-            "$(find_one artifacts/boracall-windows '*.nsis.zip.sig')")
+            "$(find_one artifacts/boracall-windows 'windows-*.nsis.zip')" \
+            "$(find_one artifacts/boracall-windows 'windows-*.nsis.zip.sig')")
+
+          # Publicar um latest.json faltando plataforma é pior que não publicar:
+          # o updater daquela plataforma nunca mais oferece atualização, e nada
+          # avisa. Antes era exatamente o que acontecia com Windows e Linux.
+          faltou=0
+          for par in "darwin-aarch64:$DARWIN_ARM" "darwin-x86_64:$DARWIN_X86" \
+                     "linux-x86_64:$LINUX_X86" "windows-x86_64:$WIN_X86"; do
+            nome="${par%%:*}"; valor="${par#*:}"
+            if [ "$valor" = "null" ]; then
+              echo "::error::sem artefato de updater pra $nome"
+              faltou=$((faltou + 1))
+            fi
+          done
+          if [ "$faltou" -gt 0 ]; then
+            echo "::error::$faltou plataforma(s) sem updater — veja o passo Collect de cada build"
+            exit 1
+          fi
 
           jq -n \
             --arg version "$VER" \
@@ -312,16 +348,25 @@ jobs:
               version: $version,
               notes: "BoraCall \($version)",
               pub_date: $pub_date,
-              platforms: (
-                {}
-                + (if $darwin_arm != null then {"darwin-aarch64": $darwin_arm} else {} end)
-                + (if $darwin_x86 != null then {"darwin-x86_64":  $darwin_x86} else {} end)
-                + (if $linux_x86  != null then {"linux-x86_64":   $linux_x86}  else {} end)
-                + (if $win_x86    != null then {"windows-x86_64": $win_x86}    else {} end)
-              )
+              platforms: {
+                "darwin-aarch64": $darwin_arm,
+                "darwin-x86_64":  $darwin_x86,
+                "linux-x86_64":   $linux_x86,
+                "windows-x86_64": $win_x86
+              }
             }' > out/latest.json
+
+          # Duas plataformas apontando pro mesmo arquivo é o bug de colisão de
+          # nome voltando; falha aqui em vez de publicar update que não instala.
+          distintas=$(jq -r '[.platforms[].url] | unique | length' out/latest.json)
+          if [ "$distintas" -lt 4 ]; then
+            echo "::error::latest.json tem URLs repetidas entre plataformas"
+            jq . out/latest.json
+            exit 1
+          fi
+
           echo "== latest.json =="
-          cat out/latest.json
+          jq . out/latest.json
 
           scp -o StrictHostKeyChecking=no out/latest.json \
             "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/latest.json"
