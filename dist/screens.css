@@ -464,3 +464,192 @@
 .mini-call .mrow .mdot { width: 6px; height: 6px; background: var(--bg-4); display: inline-block; }
 .mini-call .mrow.live .mdot { background: var(--accent); }
 .mini-call .mrow.live { color: var(--fg); }
+
+/* ==========================================================================
+   Layout de servidor: trilha │ canais │ conteúdo
+   ========================================================================== */
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 56px 220px 1fr;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+
+/* --- trilha de servidores --- */
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--bg-2);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+.rail-item {
+  width: 40px; height: 40px;
+  flex: 0 0 40px;
+  display: grid; place-items: center;
+  background: var(--bg-3);
+  color: var(--fg-dim);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.rail-item:hover { background: var(--bg-4); color: var(--fg); }
+.rail-item.on {
+  background: var(--accent-bg);
+  border-color: var(--accent-dim);
+  color: var(--accent-bright);
+}
+.rail-add { color: var(--fg-mute); font-size: var(--fs-md); }
+
+/* --- lista de canais --- */
+.canais {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-2);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+.canais-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3, 12px);
+  border-bottom: 1px solid var(--line);
+}
+/* O nome do servidor cede espaço; o botão de convidar nunca é cortado. */
+.canais-head > div:first-child { min-width: 0; }
+.canais-head > button { flex: 0 0 auto; font-size: var(--fs-xs); }
+.srv-nome {
+  font-weight: 600; font-size: var(--fs-md);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.srv-meta {
+  font-size: var(--fs-xs); color: var(--fg-mute); margin-top: 2px;
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.conn-ok   { color: var(--good); }
+.conn-wait { color: var(--mid); }
+.conn-off  { color: var(--bad); }
+
+.grupo { padding: var(--space-2) 0; }
+.grupo-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--space-1) var(--space-3, 12px);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+.grupo-head .mini {
+  background: none; border: none; color: var(--fg-mute);
+  cursor: pointer; font-size: var(--fs-md); line-height: 1; padding: 0 4px;
+}
+.grupo-head .mini:hover { color: var(--accent); }
+
+.canal {
+  display: flex; align-items: center; gap: var(--space-2);
+  width: 100%;
+  padding: 6px var(--space-3, 12px);
+  background: none; border: none;
+  color: var(--fg-dim);
+  font-size: var(--fs-md);
+  text-align: left;
+  cursor: pointer;
+}
+.canal:hover { background: var(--bg-3); color: var(--fg); }
+.canal.on { background: var(--bg-3); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
+.canal.tem-novo { color: var(--fg); font-weight: 600; }
+.canal .hash { color: var(--fg-mute); flex: 0 0 auto; }
+.canal .nome { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.canal .badge {
+  background: var(--accent); color: var(--accent-ink);
+  font-family: var(--mono); font-size: var(--fs-xs);
+  padding: 0 5px; border-radius: 8px; min-width: 16px; text-align: center;
+}
+.canal .live-dot { color: var(--good); font-size: var(--fs-xs); }
+.canal .voce { color: var(--accent); font-size: var(--fs-xs); }
+.empty.sm { padding: var(--space-2) var(--space-3, 12px); font-size: var(--fs-sm); }
+
+/* --- conteúdo --- */
+.conteudo { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+.chat, .voz-painel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.chat-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-3, 12px);
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.chat-head .hash { color: var(--fg-mute); }
+
+.msgs {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3, 12px);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.inicio { color: var(--fg-mute); font-size: var(--fs-xs); text-align: center; padding: var(--space-3, 12px) 0; }
+
+.msg { display: flex; gap: var(--space-2); padding: 3px 0; position: relative; }
+.msg:hover { background: var(--bg-2); }
+.msg.agrupada { padding-top: 0; }
+.msg.agrupada .msg-corpo { margin-left: calc(24px + var(--space-2)); }
+.msg-corpo { min-width: 0; flex: 1; }
+.msg-head { display: flex; align-items: baseline; gap: var(--space-2); font-size: var(--fs-sm); }
+.msg-head .dim { font-size: var(--fs-xs); }
+.msg-texto { font-size: var(--fs-md); white-space: pre-wrap; word-break: break-word; }
+.msg-x {
+  opacity: 0; background: none; border: none; color: var(--fg-mute);
+  cursor: pointer; font-size: var(--fs-md); padding: 0 4px;
+}
+.msg:hover .msg-x { opacity: 1; }
+.msg-x:hover { color: var(--bad); }
+
+.composer {
+  display: flex; gap: var(--space-2);
+  padding: var(--space-3, 12px);
+  border-top: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.composer .input { flex: 1; }
+
+/* --- voz --- */
+.voz-centro {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: var(--space-3, 12px); padding: var(--space-4, 16px);
+}
+.voz-count { color: var(--fg-mute); font-size: var(--fs-sm); }
+
+.voz-bar {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3, 12px);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.vb-info { display: flex; flex-direction: column; margin-right: auto; }
+.vb-info .dim { font-size: var(--fs-xs); }
+
+.link-row {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: 6px 0; border-bottom: 1px solid var(--line);
+}
+.link-row .nome { flex: 1; font-size: var(--fs-sm); }
+
+/* O app ocupa a janela toda: o chat precisa de altura definida pra rolar por
+   dentro em vez de esticar a página. A folga no topo é a barra de chrome. */
+.page.page-wide {
+  padding: 44px 0 0;
+  height: 100vh;
+  min-height: 0;
+}

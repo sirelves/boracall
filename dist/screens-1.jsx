@@ -1,4 +1,4 @@
-// BoraCall — screens part 1: landing, auth, otp, onboarding, dashboard
+// BoraCall — telas de entrada: landing, cadastro, login, reset, OTP e onboarding
 const { useState: useS1, useEffect: useE1, useRef: useR1, useMemo: useM1, useCallback: useC1 } = React;
 
 // ---------- Landing ----------
@@ -158,7 +158,7 @@ function Login({ go, setSession }) {
           try {
             const r = await window.api.login({ email, password: pw });
             setSession(s => ({ ...s, email: r.user.email, id: r.user.id, displayName: r.user.display_name || "" }));
-            go(r.user.display_name ? "dashboard" : "onboarding");
+            go(r.user.display_name ? "app" : "onboarding");
           } catch (e) { setErr(prettyApiErr(e)); }
           finally { setBusy(false); }
         }}>{busy ? "entrando..." : T.do_login}</button>
@@ -239,7 +239,7 @@ function ResetPassword({ go, session, setSession }) {
     try {
       const r = await window.api.resetPassword({ email, code: code.trim(), newPassword: pw });
       setSession(s => ({ ...s, email: r.user.email, id: r.user.id, displayName: r.user.display_name || "" }));
-      go(r.user.display_name ? "dashboard" : "onboarding");
+      go(r.user.display_name ? "app" : "onboarding");
     } catch (e) { setErr(prettyApiErr(e)); }
     finally { setBusy(false); }
   };
@@ -297,15 +297,6 @@ function ResetPassword({ go, session, setSession }) {
   );
 }
 
-// Simple Google G glyph — geometric, not the real logo
-function GoogleG({ size=16 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true">
-      <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" strokeWidth="1.25" />
-      <rect x="8" y="7" width="5" height="2" fill="currentColor" />
-    </svg>
-  );
-}
 
 // ---------- OTP ----------
 function OTP({ go, session }) {
@@ -438,7 +429,7 @@ function Onboarding({ go, session, setSession }) {
       // Free the preview mic — we'll re-request at Call-time.
       if (detachRef.current) { detachRef.current(); detachRef.current = null; }
       if (streamRef.current) { streamRef.current.getTracks().forEach(t=>t.stop()); streamRef.current = null; }
-      go("dashboard");
+      go("app");
     } catch (e) { setErr(prettyApiErr(e)); }
     finally { setBusy(false); }
   };
@@ -494,88 +485,6 @@ function MicBars({ level, n = 14 }) {
   );
 }
 
-// ---------- Dashboard (rooms) ----------
-function Dashboard({ go, session, rooms, setActiveRoom, onCreate, onJoin, onPasteLink, loading }) {
-  const T = STRINGS.pt;
-  const [quick, setQuick] = useS1("");
-  const persistent = rooms.filter(r => r.type === "persistent");
-  const ephemeral = rooms.filter(r => r.type === "ephemeral");
-  const liveCount = rooms.filter(r=>r.live).length;
-
-  const doQuickJoin = () => {
-    const v = quick.trim();
-    if (!v) return;
-    setQuick("");
-    if (onPasteLink) onPasteLink(v);
-  };
-
-  return (
-    <div className="dash" data-screen-label="06 Dashboard">
-      <aside className="dash-side">
-        <div className="sidetitle">Navegar</div>
-        <div className="ws-item on">
-          <SidebarIcon name="rooms" />
-          <span>Salas</span>
-        </div>
-        <div className="ws-item" onClick={()=>go("settings")}>
-          <SidebarIcon name="settings" />
-          <span>{T.settings}</span>
-        </div>
-      </aside>
-
-      <section className="dash-main">
-        <div className="dash-head">
-          <div>
-            <h2>{T.your_rooms}</h2>
-            <div className="sub">
-              <b style={{color:liveCount>0?"var(--good)":"var(--fg-dim)"}}>{liveCount}</b> ao vivo
-              {" · "}
-              <b style={{color:"var(--fg)"}}>{rooms.length}</b> no total
-              {" · entrada como "}
-              <b style={{color:"var(--fg)"}}>{session.displayName || "você"}</b>
-            </div>
-          </div>
-          <div className="dash-actions">
-            <div className="quick-join">
-              <input
-                placeholder="cola link ou slug…"
-                value={quick}
-                onChange={e=>setQuick(e.target.value)}
-                onKeyDown={e=>{ if (e.key === "Enter") doQuickJoin(); }}
-              />
-              <kbd>ENTER</kbd>
-            </div>
-            <button className="btn-line" onClick={()=>go("join")}>↳ {T.join_room}</button>
-            <button className="btn-primary" onClick={()=>go("create")}>+ {T.create_room}</button>
-          </div>
-        </div>
-
-        <div>
-          <div className="label" style={{marginBottom:8}}>{T.rooms_persistent}</div>
-          <div className="rooms-grid">
-            {loading && persistent.length === 0 && <RoomCardSkeleton count={2} />}
-            {!loading && persistent.length === 0 && (
-              <div className="empty">Nenhuma sala fixa — salas fixas ficam ativas até você remover.</div>
-            )}
-            {persistent.map(r => <RoomCard key={r.id} r={r} onClick={()=>{ setActiveRoom(r); go(r.live?"call":"precall"); }} />)}
-          </div>
-        </div>
-
-        <div>
-          <div className="label" style={{marginBottom:8}}>{T.rooms_ephemeral}</div>
-          <div className="rooms-grid">
-            {loading && ephemeral.length === 0 && <RoomCardSkeleton count={3} />}
-            {!loading && ephemeral.length === 0 && (
-              <div className="empty">Nenhuma sala rápida ativa · crie uma e compartilhe o link</div>
-            )}
-            {ephemeral.map(r => <RoomCard key={r.id} r={r} onClick={()=>{ setActiveRoom(r); go(r.live?"call":"precall"); }} />)}
-          </div>
-        </div>
-      </section>
-    </div>
-  );
-}
-
 function SidebarIcon({ name }) {
   const map = {
     rooms: <path d="M3 10h10M3 5h10M3 15h7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" fill="none"/>,
@@ -588,42 +497,4 @@ function SidebarIcon({ name }) {
   );
 }
 
-function RoomCardSkeleton({ count = 2 }) {
-  return Array.from({length: count}).map((_,i)=>(
-    <div key={i} className="room-card" style={{cursor:"default"}}>
-      <div className="rc-top">
-        <span className="skel skel-line" style={{width:"60%",height:16}} />
-        <span className="skel skel-line" style={{width:40,height:10}} />
-      </div>
-      <div className="skel skel-line" style={{width:"40%",height:14}} />
-      <div className="skel skel-line" style={{width:"30%",height:10}} />
-    </div>
-  ));
-}
-
-function RoomCard({ r, onClick }) {
-  const inits = (n) => n.split(" ").map(s=>s[0]).join("").slice(0,2).toUpperCase();
-  return (
-    <div className={`room-card ${r.live?"live":""}`} onClick={onClick}>
-      <div className="rc-top">
-        <span className="rc-name">{r.name}</span>
-        <span className={`rc-type ${r.live?"live":""}`}>
-          {r.live ? (<><span className="live-dot" /> ao vivo</>) : (r.type === "persistent" ? "fixa" : "rápida")}
-        </span>
-      </div>
-      <div className="rc-users">
-        <span className="rc-stack">
-          {r.members.slice(0,4).map((m,i)=>(<span key={i} className="initials sm">{inits(m)}</span>))}
-        </span>
-        <span>{r.count || r.members.length}</span>
-      </div>
-      <div className="rc-foot">
-        <span>{r.live ? `${r.speaking||0} falando` : `ativa há ${r.lastActive}`}</span>
-        <span className="mono">{r.slug}</span>
-      </div>
-      <span className="rc-enter">entrar →</span>
-    </div>
-  );
-}
-
-Object.assign(window, { Landing, Signup, Login, ForgotPassword, ResetPassword, OTP, Onboarding, Dashboard, RoomCard, RoomCardSkeleton, SidebarIcon, MicBars, GoogleG });
+Object.assign(window, { Landing, Signup, Login, ForgotPassword, ResetPassword, OTP, Onboarding, SidebarIcon, MicBars });

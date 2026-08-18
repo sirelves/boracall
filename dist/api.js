@@ -136,10 +136,7 @@
 
   function logout() { setToken(null); setUser(null); }
 
-  // ----- Rooms -------------------------------------------------------------
-  // The server returns { id, slug, name, room_type, locked, created_by, created_at, last_active_at, live }
-  // The UI historically expected { id, slug, name, type, live(bool), count, members[], speaking, lastActive(human) }.
-  // Normalize here so the rest of the app keeps using one shape.
+  // ----- Servidores e canais ----------------------------------------------
   function humanTime(iso) {
     if (!iso) return "—";
     const diff = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -149,35 +146,42 @@
     if (diff < 604800) return Math.floor(diff / 86400) + "d";
     return "há muito";
   }
-  function normalizeRoom(r) {
-    if (!r) return r;
-    return {
-      id: r.id,
-      slug: r.slug,
-      name: r.name,
-      type: r.room_type || r.type,
-      locked: !!r.locked,
-      created_by: r.created_by,
-      created_at: r.created_at,
-      last_active_at: r.last_active_at,
-      lastActive: humanTime(r.last_active_at),
-      count: r.live || 0,
-      live: (r.live || 0) > 0,
-      speaking: 0,
-      members: [],  // fills from WebSocket presence once connected
-    };
-  }
 
-  const listRooms  = async ()                   => (await request("/api/rooms")).map(normalizeRoom);
-  const createRoom = async ({ name, type, pw }) => normalizeRoom(await request("/api/rooms", {
-    method: "POST",
-    body: { name, room_type: type, password: pw || null },
-  }));
-  const getRoom    = async (slug)               => normalizeRoom(await request("/api/rooms/" + encodeURIComponent(slug)));
-  const joinRoom   = async (slug, password)     => normalizeRoom(await request(
-    "/api/rooms/" + encodeURIComponent(slug) + "/join",
-    { method: "POST", body: { password: password || null } },
-  ));
+  const enc = encodeURIComponent;
+
+  const listServers  = ()             => request("/api/servers");
+  const createServer = (name)         => request("/api/servers", { method: "POST", body: { name } });
+  const getServer    = (slug)         => request("/api/servers/" + enc(slug));
+  const joinServer   = (slug)         => request("/api/servers/" + enc(slug) + "/join", { method: "POST" });
+  const createChannel = (slug, { name, kind }) =>
+    request("/api/servers/" + enc(slug) + "/channels", { method: "POST", body: { name, kind } });
+  const getChannel   = (slug)         => request("/api/channels/" + enc(slug));
+
+  // ----- Mensagens ---------------------------------------------------------
+  function listMessages(channelSlug, { before, limit } = {}) {
+    const qs = new URLSearchParams();
+    if (before) qs.set("before", before);
+    if (limit)  qs.set("limit", String(limit));
+    const q = qs.toString();
+    return request("/api/channels/" + enc(channelSlug) + "/messages" + (q ? "?" + q : ""));
+  }
+  const sendMessage = (channelSlug, body) =>
+    request("/api/channels/" + enc(channelSlug) + "/messages", { method: "POST", body: { body } });
+  const editMessage = (id, body) =>
+    request("/api/messages/" + enc(id), { method: "PATCH", body: { body } });
+  const deleteMessage = (id) =>
+    request("/api/messages/" + enc(id), { method: "DELETE" });
+  const markRead = (channelSlug, messageId) =>
+    request("/api/channels/" + enc(channelSlug) + "/read", {
+      method: "PUT", body: { message_id: messageId || null },
+    });
+
+  /// Aceita link completo, caminho ou slug puro: "boracall.com/c/ab3kz", "/c/ab3kz", "ab3kz".
+  function parseChannelLink(input) {
+    const t = String(input || "").trim();
+    const m = /(?:\/c\/|\/s\/|^)([a-z0-9]{3,})\/?$/i.exec(t);
+    return m ? m[1] : null;
+  }
 
   // ----- System ------------------------------------------------------------
   const health  = ()  => request("/api/health", { auth: false });
@@ -191,8 +195,12 @@
     // auth
     signup, login, requestOtp, verifyOtp, requestPasswordReset, resetPassword, me, updateMe, logout,
     getToken, getUser, setToken, setUser,
-    // rooms
-    listRooms, createRoom, getRoom, joinRoom,
+    // servidores e canais
+    listServers, createServer, getServer, joinServer, createChannel, getChannel,
+    // mensagens
+    listMessages, sendMessage, editMessage, deleteMessage, markRead,
+    // util
+    parseChannelLink, humanTime,
     // system
     health, version,
   };

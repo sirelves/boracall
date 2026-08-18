@@ -1,578 +1,859 @@
-// BoraCall — screens part 2: create, join, invite-join, pre-call, call, post-call, settings
+// BoraCall — telas do app autenticado: servidores, canais de texto e de voz.
+//
+// Layout, da esquerda pra direita:
+//   trilha de servidores │ lista de canais │ conteúdo (chat ou call)
+//
+// Uma conexão WebSocket por servidor ativo, criada aqui e passada pra baixo.
+// A mesh de voz vive dentro de um canal e é destruída ao sair dele.
+
 const { useState: useS2, useEffect: useE2, useRef: useR2, useMemo: useM2, useCallback: useC2 } = React;
 
-// ---------- Create room modal ----------
-function CreateRoom({ go, onCreate, activeRoom }) {
-  const T = STRINGS.pt;
-  const [name, setName] = useS2("");
-  const [type, setType] = useS2("ephemeral");
-  const [pw, setPw] = useS2("");
-  const [busy, setBusy] = useS2(false);
-  const valid = name.trim().length >= 2;
+const iniciais = (nome) =>
+  String(nome || "?")
+    .split(/\s+/)
+    .map((s) => s[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 
-  // The backend mints the slug. This preview is illustrative only — the real slug
-  // is known after /api/rooms returns.
-  const publicHost = (window.BC_PUBLIC_URL || "https://boracall.com").replace(/^https?:\/\//, "");
-  const previewLink = `${publicHost}/s/***`;
-  const err = activeRoom && activeRoom._error;
+const publicUrl = () =>
+  (window.BC_PUBLIC_URL || "https://boracall.com").replace(/\/+$/, "");
 
-  const submit = async () => {
-    if (!valid || busy) return;
-    setBusy(true);
-    await onCreate({ name: name.trim(), type, pw });
-    setBusy(false);
-    // onCreate is responsible for transitioning; if it failed, activeRoom._error was set.
-  };
+// ---------------------------------------------------------------------------
+// Casca do app — dona da conexão e do estado do servidor ativo
+// ---------------------------------------------------------------------------
 
-  return (
-    <div className="modal-overlay" onClick={()=>go("dashboard")}>
-      <div className="modal" onClick={(e)=>e.stopPropagation()}>
-        <div className="modal-head">
-          <h3>{T.create_title}</h3>
-          <button className="x" onClick={()=>go("dashboard")}>×</button>
-        </div>
-        <div className="modal-body">
-          <div>
-            <div className="label">{T.room_name}</div>
-            <input className="input" placeholder={T.room_name_ph} value={name} onChange={(e)=>setName(e.target.value)} autoFocus />
-            <div className="link-preview" style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
-              <span className="mono dim" style={{fontSize:11,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{previewLink}</span>
-              <span className="mono dim" style={{fontSize:10}}>slug gerado ao criar</span>
-            </div>
-          </div>
+function AppShell({ go, session, setSession, tweaks, setTweak }) {
+  const [servers, setServers] = useS2([]);
+  const [activeSlug, setActiveSlug] = useS2(() => {
+    try { return localStorage.getItem("bc_server") || null; } catch { return null; }
+  });
+  const [detail, setDetail] = useS2(null);           // servidor ativo + canais + membros
+  const [activeChannelId, setActiveChannelId] = useS2(null);
+  const [conn, setConn] = useS2("idle");             // idle | connecting | open | reconnecting | closed
+  const [modal, setModal] = useS2(null);             // null | criar-servidor | criar-canal | convite | entrar
+  const [erro, setErro] = useS2("");
+  const [carregando, setCarregando] = useS2(true);
 
-          <div>
-            <div className="label">{T.room_type}</div>
-            <div className="seg" style={{marginTop:6}}>
-              <button className={`seg-btn ${type==="ephemeral"?"seg-on":""}`} onClick={()=>setType("ephemeral")}>rápida</button>
-              <button className={`seg-btn ${type==="persistent"?"seg-on":""}`} onClick={()=>setType("persistent")}>fixa</button>
-            </div>
-            <div className="dim" style={{fontSize:12,marginTop:6}}>
-              {type === "ephemeral" ? T.ephemeral : T.persistent}
-            </div>
-          </div>
-
-          <div>
-            <div className="label">{T.room_password}</div>
-            <input className="input" type="text" placeholder="em branco = livre" value={pw} onChange={(e)=>setPw(e.target.value)} />
-            <div className="dim" style={{fontSize:11,marginTop:4,fontFamily:"var(--mono)"}}>{T.password_hint}</div>
-          </div>
-
-          {err && <div className="form-error mono">{err}</div>}
-        </div>
-        <div className="modal-foot">
-          <button className="btn-ghost" onClick={()=>go("dashboard")}>{T.cancel}</button>
-          <button className="btn-primary" disabled={!valid || busy} onClick={submit}>{busy ? "criando..." : T.create_cta}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ---------- Join by link ----------
-function JoinByLink({ go, onPasteLink, activeRoom }) {
-  const T = STRINGS.pt;
-  const [link, setLink] = useS2("");
-  const [busy, setBusy] = useS2(false);
-  const [localErr, setLocalErr] = useS2("");
-  // Aceita URL completa (com ou sem protocolo, apex ou app) OU slug puro.
-  const valid = /(?:\/s\/|^)([a-z0-9-]{3,})$/i.test(link.trim());
-  const remoteErr = activeRoom && activeRoom._error;
-  const err = localErr || remoteErr;
-
-  const submit = async () => {
-    if (!valid || busy) return;
-    setBusy(true); setLocalErr("");
-    try {
-      await onPasteLink(link.trim());
-    } catch (e) {
-      setLocalErr(e.message || "não pôde entrar");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="modal-overlay" onClick={()=>go("dashboard")}>
-      <div className="modal" onClick={(e)=>e.stopPropagation()}>
-        <div className="modal-head">
-          <h3>{T.join_title}</h3>
-          <button className="x" onClick={()=>go("dashboard")}>×</button>
-        </div>
-        <div className="modal-body">
-          <div className="label">{T.paste_link}</div>
-          <input
-            className="input mono"
-            placeholder={T.paste_ph}
-            value={link}
-            onChange={(e)=>{ setLink(e.target.value); setLocalErr(""); }}
-            onKeyDown={(e)=>{ if (e.key === "Enter") submit(); }}
-            autoFocus
-          />
-          <div className="dim mono" style={{fontSize:11}}>Cola o link que te mandaram. A gente cuida do resto.</div>
-          {err && <div className="form-error mono" style={{marginTop:8}}>sala não encontrada — o link pode estar incorreto ou a sala já foi removida</div>}
-        </div>
-        <div className="modal-foot">
-          <button className="btn-ghost" onClick={()=>go("dashboard")}>{T.cancel}</button>
-          <button className="btn-primary" disabled={!valid || busy} onClick={submit}>{busy ? "entrando..." : T.join_cta}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ---------- Invite landing (coming from a shared link) ----------
-function InviteLanding({ go, invite, onAccept }) {
-  const T = STRINGS.pt;
-  const [pw, setPw] = useS2("");
-  const needsPw = invite.locked;
-  const canEnter = !needsPw || pw.length >= 1;
-
-  return (
-    <div className="invite-join">
-      <div className="invite-top">
-        <span className="host-av">{invite.hostInitials}</span>
-        <div className="host-meta">
-          <div className="t">{invite.room}</div>
-          <div className="s">{T.invite_by} <b style={{color:"var(--fg)"}}>{invite.host}</b> · {(window.BC_PUBLIC_URL || "https://boracall.com").replace(/^https?:\/\//, "")}/s/{invite.slug}</div>
-        </div>
-      </div>
-      <div className="invite-body">
-        <div className="label">{T.invite_users_here}</div>
-        <div className="mini-call">
-          {invite.present.map((p, i) => (
-            <div key={i} className={`mrow ${p.live?"live":""}`}>
-              <span className="mdot" />
-              <span>{p.name}</span>
-              <span style={{marginLeft:"auto",color:"var(--fg-mute)"}}>{p.live?"LIVE":"IDLE"}</span>
-            </div>
-          ))}
-        </div>
-        {needsPw && (
-          <>
-            <div className="label" style={{color:"var(--bad)"}}>🔒 {T.invite_locked}</div>
-            <input className="input" type="password" placeholder={T.room_password_ph} value={pw} onChange={(e)=>setPw(e.target.value)} />
-          </>
-        )}
-        <button className="btn-primary" disabled={!canEnter} onClick={async ()=>{ await onAccept(needsPw ? pw : undefined); }}>{T.enter_room}</button>
-        <div className="auth-foot" style={{margin:"0 -24px -20px",padding:"14px 24px",borderTop:"1px solid var(--line)"}}>
-          <a onClick={()=>go("dashboard")}>{T.back}</a>
-          <span className="dim">boracall</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ---------- Pre-call (mic check) ----------
-function PreCall({ go, activeRoom, session, tweaks, setTweak }) {
-  const T = STRINGS.pt;
-  const [level, setLevel] = useS2(0);
-  const [device, setDevice] = useS2("padrão do sistema");
-  const [startMuted, setStartMuted] = useS2(false);
-  const [err, setErr] = useS2("");
-  const streamRef = useR2(null);
-  const detachRef = useR2(null);
-
-  // Acquire a real mic stream for the VU meter. Release when leaving this screen.
-  useE2(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const stream = await window.WebRTCMesh.acquireMic();
-        if (cancelled) { stream.getTracks().forEach(t=>t.stop()); return; }
-        streamRef.current = stream;
-        detachRef.current = window.WebRTCMesh.attachLevelMeter(stream, (l)=>setLevel(l), 120);
-        // Figure out which device was picked.
-        const track = stream.getAudioTracks()[0];
-        if (track && track.label) setDevice(track.label);
-      } catch (e) {
-        setErr("microfone bloqueado — libera nas preferências do sistema");
-      }
-    })();
-    return () => {
-      cancelled = true;
-      if (detachRef.current) detachRef.current();
-      if (streamRef.current) streamRef.current.getTracks().forEach(t=>t.stop());
-      streamRef.current = null;
-      detachRef.current = null;
-    };
-  }, []);
-
-  const enter = () => {
-    // Hand the stream off to Call via a window global so we don't re-prompt.
-    window.__bcPreferences = { startMuted };
-    if (streamRef.current) {
-      window.__bcLocalStream = streamRef.current;
-      streamRef.current = null;
-      if (detachRef.current) { detachRef.current(); detachRef.current = null; }
-    }
-    go("call");
-  };
-
-  return (
-    <div className="auth" style={{maxWidth: 460}}>
-      <div className="auth-head">
-        <h2>{T.pre_title}</h2>
-        <div className="sub">{activeRoom?.name || "sala"} · {T.pre_sub}</div>
-      </div>
-      <div className="auth-body">
-        <div className="mic-check">
-          <div className="mc-head"><span>{T.mic_level}</span><span className="dim">{T.test_mic}</span></div>
-          <MicBars level={level} n={18} />
-          <div className="mc-device"><span>{T.device_label}</span><b>{device}</b></div>
-        </div>
-
-        <div className="set-row" style={{padding:0,gridTemplateColumns:"1fr auto"}}>
-          <div className="k">{T.start_muted} <span className="d">entrar com o microfone já desligado</span></div>
-          <div className="seg">
-            <button className={`seg-btn ${!startMuted?"seg-on":""}`} onClick={()=>setStartMuted(false)}>off</button>
-            <button className={`seg-btn ${startMuted?"seg-on":""}`} onClick={()=>setStartMuted(true)}>on</button>
-          </div>
-        </div>
-
-        <div className="set-row" style={{padding:0,gridTemplateColumns:"1fr auto"}}>
-          <div className="k">Modo do microfone <span className="d">mantém ligado ou segura pra falar</span></div>
-          <div className="seg">
-            <button className={`seg-btn ${tweaks.micMode==="toggle"?"seg-on":""}`} onClick={()=>setTweak("micMode","toggle")}>toggle</button>
-            <button className={`seg-btn ${tweaks.micMode==="ptt"?"seg-on":""}`} onClick={()=>setTweak("micMode","ptt")}>ptt</button>
-          </div>
-        </div>
-
-        {err && <div className="form-error mono">{err}</div>}
-
-        <button className="btn-primary" disabled={!!err} onClick={enter}>{T.join_call}</button>
-      </div>
-      <div className="auth-foot">
-        <a onClick={()=>go("dashboard")}>{T.back}</a>
-        <span className="dim mono">ready</span>
-      </div>
-    </div>
-  );
-}
-
-// ---------- Call screen (real WebRTC mesh + signaling) ----------
-function Call({ go, activeRoom, session, tweaks, onEnd }) {
-  const T = STRINGS.pt;
-  // Local-first user row; remote rows flow in from the mesh.
-  const [peers, setPeers] = useS2([]);          // [{id, name, state, level, muted}]
-  const [muted, setMuted] = useS2(!!(window.__bcPreferences && window.__bcPreferences.startMuted));
-  const [ptt, setPtt] = useS2(false);
-  const [elapsed, setElapsed] = useS2(0);
-  const [uiHidden, setUiHidden] = useS2(false);
-  const [status, setStatus] = useS2("connecting");    // connecting | live | reconnecting | closed | failed
-  const [err, setErr] = useS2("");
-  const [localLevel, setLocalLevel] = useS2(0);
-  const [netStats, setNetStats] = useS2({ ping: 0, loss: 0 });
+  // Voz: canal atual, mesh e pares. Vive acima do painel de conteúdo pra que
+  // trocar de canal de texto não derrube a call.
+  const [voiceChannelId, setVoiceChannelId] = useS2(null);
+  const [voicePeers, setVoicePeers] = useS2([]);
+  const [muted, setMuted] = useS2(false);
+  const [voiceErro, setVoiceErro] = useS2("");
 
   const rtRef = useR2(null);
   const meshRef = useR2(null);
-  const peakUsersRef = useR2(1);
-  const speakersRef = useR2(new Map());          // userId -> { name, talkedSec }
 
-  // --- Boot: wire up mesh + signaling --------------------------------
-  useE2(() => {
-    let disposed = false;
-    (async () => {
-      if (!activeRoom || !activeRoom.slug) { setErr("sala inválida"); return; }
+  const canais = detail?.channels || [];
+  const canalAtivo = canais.find((c) => c.id === activeChannelId) || null;
+  const canalDeVoz = canais.find((c) => c.id === voiceChannelId) || null;
+  const souDono = detail?.role === "owner";
 
-      // Acquire mic — prefer the stream handed over from PreCall.
-      let stream = window.__bcLocalStream;
-      window.__bcLocalStream = null;
-      try {
-        if (!stream) stream = await window.WebRTCMesh.acquireMic();
-      } catch (e) {
-        setErr("microfone bloqueado"); return;
-      }
-      if (disposed) { stream.getTracks().forEach(t=>t.stop()); return; }
-
-      if (muted) stream.getAudioTracks().forEach(t => (t.enabled = false));
-
-      const rt = new window.Realtime(activeRoom.slug);
-      rtRef.current = rt;
-      const mesh = new window.WebRTCMesh.Mesh(rt, session.id || "me");
-      meshRef.current = mesh;
-
-      rt.on("_state", (s) => {
-        if (s === "open") setStatus("live");
-        else if (s === "reconnecting") setStatus("reconnecting");
-        else if (s === "closed") setStatus("closed");
-      });
-      rt.on("_error", () => setStatus("failed"));
-
-      // IMPORTANT: never store "me" in peers state — it'd capture stale `muted`
-      // from closure. We derive the self row at render time from current state.
-      const render = () => {
-        const list = [];
-        for (const [uid, p] of mesh.peers) {
-          list.push({
-            id: uid,
-            name: p.displayName || "peer",
-            state: p.muted ? "muted" : "listening",
-            level: 0,
-            muted: !!p.muted,
-          });
-        }
-        if (list.length + 1 > peakUsersRef.current) peakUsersRef.current = list.length + 1;
-        setPeers(list);
-      };
-      mesh.on("peers", render);
-      mesh.on("local-level", (l) => setLocalLevel(l));
-      mesh.on("level", ({ userId, level }) => {
-        // Update speaking row by user id.
-        setPeers(prev => prev.map(p => p.id === userId ? { ...p, state: level > 0.05 ? "speaking" : "listening", level } : p));
-        const s = speakersRef.current.get(userId) || { name: "peer", talkedSec: 0 };
-        s.talkedSec += 0.15; // ~150ms tick heuristic; precise stats come from WebRTC stats API later
-        speakersRef.current.set(userId, s);
-      });
-
-      try {
-        await mesh.start({ stream });
-        rt.connect();
-      } catch (e) {
-        setErr("falha iniciando chamada: " + (e.message || e));
-        return;
-      }
-      render();
-    })();
-
-    return () => {
-      disposed = true;
-      try { rtRef.current && rtRef.current.close(); } catch {}
-      try { meshRef.current && meshRef.current.stop(); } catch {}
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // --- carregar lista de servidores ---------------------------------------
+  const recarregarServidores = useC2(async () => {
+    try {
+      const list = await window.api.listServers();
+      setServers(list);
+      setActiveSlug((atual) => atual || (list[0] ? list[0].slug : null));
+      return list;
+    } catch (e) {
+      setErro(e.message || "não deu pra carregar seus servidores");
+      return [];
+    } finally {
+      setCarregando(false);
+    }
   }, []);
 
-  // Push mute state to mesh + broadcast.
+  useE2(() => { recarregarServidores(); }, [recarregarServidores]);
+
+  // --- carregar o servidor ativo ------------------------------------------
+  const recarregarDetalhe = useC2(async (slug) => {
+    if (!slug) { setDetail(null); return null; }
+    try {
+      const d = await window.api.getServer(slug);
+      setDetail(d);
+      setActiveChannelId((atual) => {
+        const aindaExiste = d.channels.some((c) => c.id === atual);
+        if (aindaExiste) return atual;
+        const primeiroTexto = d.channels.find((c) => c.kind === "text");
+        return primeiroTexto ? primeiroTexto.id : (d.channels[0]?.id ?? null);
+      });
+      return d;
+    } catch (e) {
+      setErro(e.message || "não deu pra abrir o servidor");
+      return null;
+    }
+  }, []);
+
+  useE2(() => {
+    if (activeSlug) { try { localStorage.setItem("bc_server", activeSlug); } catch {} }
+    recarregarDetalhe(activeSlug);
+  }, [activeSlug, recarregarDetalhe]);
+
+  // --- conexão WebSocket do servidor ativo --------------------------------
+  useE2(() => {
+    if (!activeSlug) return;
+    // Trocar de servidor derruba a call: a mesh pertence ao canal de voz, que
+    // pertence ao servidor que estamos deixando.
+    pararVoz();
+
+    const rt = new window.Realtime(activeSlug);
+    rtRef.current = rt;
+
+    rt.on("_state", (s) => setConn(s));
+    rt.on("voice_state", (m) => {
+      // Snapshot inicial: quantos em cada canal de voz.
+      setDetail((d) => {
+        if (!d) return d;
+        const porCanal = new Map((m.channels || []).map((c) => [c.channel_id, c.peers.length]));
+        return { ...d, channels: d.channels.map((c) => ({ ...c, live: porCanal.get(c.id) || 0 })) };
+      });
+    });
+    const atualizaLive = (channelId, n) =>
+      setDetail((d) => d && ({
+        ...d,
+        channels: d.channels.map((c) => (c.id === channelId ? { ...c, live: n } : c)),
+      }));
+    rt.on("voice_presence", (m) => atualizaLive(m.channel_id, (m.peers || []).length));
+    rt.on("error", (m) => setVoiceErro(m.message || "erro no servidor"));
+
+    rt.connect();
+    return () => {
+      pararVoz();
+      try { rt.close(); } catch {}
+      rtRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSlug]);
+
+  // --- voz -----------------------------------------------------------------
+  function pararVoz() {
+    if (meshRef.current) { try { meshRef.current.stop(); } catch {} meshRef.current = null; }
+    if (rtRef.current && rtRef.current.voiceChannelId) {
+      try { rtRef.current.leaveVoice(); } catch {}
+    }
+    setVoiceChannelId(null);
+    setVoicePeers([]);
+    setMuted(false);
+  }
+
+  const entrarNaVoz = useC2(async (canal) => {
+    setVoiceErro("");
+    const rt = rtRef.current;
+    if (!rt) return;
+    if (voiceChannelId === canal.id) return;
+    if (meshRef.current) { try { meshRef.current.stop(); } catch {} meshRef.current = null; }
+
+    let stream;
+    try {
+      stream = await window.WebRTCMesh.acquireMic();
+    } catch (e) {
+      setVoiceErro("microfone bloqueado — libera nas preferências do sistema");
+      return;
+    }
+
+    const mesh = new window.WebRTCMesh.Mesh(rt, session.id, { channelId: canal.id });
+    meshRef.current = mesh;
+    mesh.on("peers", (map) => {
+      setVoicePeers([...map.entries()].map(([id, p]) => ({
+        id, name: p.displayName || "alguém", muted: !!p.muted, level: 0,
+      })));
+    });
+    mesh.on("level", ({ userId, level }) =>
+      setVoicePeers((prev) => prev.map((p) => (p.id === userId ? { ...p, level } : p))));
+
+    await mesh.start({ stream });
+    rt.joinVoice(canal.id);
+    setVoiceChannelId(canal.id);
+    setMuted(false);
+  }, [session.id, voiceChannelId]);
+
+  const sairDaVoz = useC2(() => pararVoz(), []);
+
   useE2(() => {
     if (meshRef.current) meshRef.current.setMuted(muted);
   }, [muted]);
 
-  // --- Periodic WebRTC stats (real ping + loss from first remote peer) --
+  // Atalho global de mute enquanto estiver em call.
   useE2(() => {
-    const iv = setInterval(async () => {
-      const mesh = meshRef.current;
-      if (!mesh) return;
-      const first = mesh.peers.values().next().value;
-      if (!first || !first.pc) return;
-      try {
-        const stats = await first.pc.getStats(null);
-        let rttMs = null, loss = null;
-        stats.forEach(r => {
-          if (r.type === "candidate-pair" && r.state === "succeeded" && r.currentRoundTripTime != null) {
-            rttMs = Math.round(r.currentRoundTripTime * 1000);
-          }
-          if (r.type === "inbound-rtp" && r.kind === "audio") {
-            const lost = r.packetsLost || 0;
-            const recv = r.packetsReceived || 1;
-            loss = Math.max(0, Math.min(100, (lost / Math.max(1, lost + recv)) * 100));
-          }
-        });
-        if (rttMs != null || loss != null) setNetStats(s => ({ ping: rttMs ?? s.ping, loss: loss ?? s.loss }));
-      } catch {}
-    }, 1500);
-    return () => clearInterval(iv);
+    if (!voiceChannelId) return;
+    const onKey = (e) => {
+      if (e.target && ["INPUT", "TEXTAREA"].includes(e.target.tagName)) return;
+      if (e.code === "KeyM") { setMuted((m) => !m); e.preventDefault(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [voiceChannelId]);
+
+  // --- ações ---------------------------------------------------------------
+  const criarServidor = async (nome) => {
+    const s = await window.api.createServer(nome);
+    await recarregarServidores();
+    setActiveSlug(s.slug);
+    setModal(null);
+  };
+
+  const criarCanal = async ({ nome, tipo }) => {
+    await window.api.createChannel(activeSlug, { name: nome, kind: tipo });
+    await recarregarDetalhe(activeSlug);
+    setModal(null);
+  };
+
+  const entrarPorLink = async (link) => {
+    const slug = window.api.parseChannelLink(link);
+    if (!slug) throw new Error("link inválido");
+    // O link é de canal: resolve, entra no servidor se precisar, abre o canal.
+    const ch = await window.api.getChannel(slug);
+    if (!ch.is_member) await window.api.joinServer(ch.server_slug);
+    await recarregarServidores();
+    setActiveSlug(ch.server_slug);
+    setActiveChannelId(ch.id);
+    setModal(null);
+  };
+
+  const zerarNaoLidas = useC2((channelId) => {
+    setDetail((d) => d && ({
+      ...d,
+      channels: d.channels.map((c) => (c.id === channelId ? { ...c, unread: 0 } : c)),
+    }));
   }, []);
 
-  // Elapsed clock.
-  useE2(() => { const iv = setInterval(() => setElapsed(s => s+1), 1000); return () => clearInterval(iv); }, []);
-
-  // Idle UI fade (only when invisible tweak on).
-  const idleRef = useR2(null);
-  useE2(() => {
-    const bump = () => {
-      setUiHidden(false);
-      clearTimeout(idleRef.current);
-      if (tweaks.invisible) idleRef.current = setTimeout(() => setUiHidden(true), 3500);
-    };
-    bump();
-    window.addEventListener("mousemove", bump);
-    window.addEventListener("keydown", bump);
-    return () => {
-      window.removeEventListener("mousemove", bump);
-      window.removeEventListener("keydown", bump);
-      clearTimeout(idleRef.current);
-    };
-  }, [tweaks.invisible]);
-
-  const end = () => {
-    // Hand real stats to onEnd.
-    const speakers = Array.from(speakersRef.current.entries()).map(([id, s]) => ({
-      name: s.name, talkedSec: Math.round(s.talkedSec), pct: Math.min(100, Math.round(s.talkedSec / Math.max(1, elapsed) * 100)),
+  const incrementarNaoLidas = useC2((channelId) => {
+    setDetail((d) => d && ({
+      ...d,
+      channels: d.channels.map((c) =>
+        c.id === channelId ? { ...c, unread: (c.unread || 0) + 1 } : c),
     }));
-    onEnd({
-      peakUsers: peakUsersRef.current,
-      avgPing:  netStats.ping,
-      avgLoss:  netStats.loss,
-      speakers,
-    });
-  };
+  }, []);
 
-  useE2(() => {
-    const down = e => {
-      if (e.target && e.target.tagName === "INPUT") return;
-      if (e.code === "KeyM") { setMuted(m=>!m); e.preventDefault(); }
-      if (e.code === "KeyH") setUiHidden(v=>!v);
-      if (e.code === "Escape") end();
-      if (e.code === "Space" && tweaks.micMode === "ptt" && !e.repeat) { setPtt(true); setMuted(false); e.preventDefault(); }
-    };
-    const up = e => {
-      if (e.code === "Space" && tweaks.micMode === "ptt") { setPtt(false); setMuted(true); }
-    };
-    window.addEventListener("keydown", down); window.addEventListener("keyup", up);
-    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tweaks.micMode]);
+  if (carregando) {
+    return <div className="app-shell"><div className="empty" style={{margin:"auto"}}>carregando…</div></div>;
+  }
 
-  // Self row is derived here (no stale closure): reflects live `muted` + `localLevel`.
-  const selfRow = {
-    id: session.id || "me",
-    name: (session.displayName || session.email || "você") + "",
-    state: muted ? "muted" : (localLevel > 0.08 ? "speaking" : "listening"),
-    level: localLevel,
-    isYou: true,
-    muted,
-  };
-  const users = [selfRow, ...peers];
-  const speakingCount = users.filter(u => u.state === "speaking").length;
-  const mm = String(Math.floor(elapsed/60)).padStart(2,"0");
-  const ss = String(elapsed%60).padStart(2,"0");
-  const ordered = users;
-  const statusLabel =
-    status === "live" ? "Conectado" :
-    status === "reconnecting" ? "Reconectando" :
-    status === "failed" ? "Falhou" :
-    status === "closed" ? "Desconectado" : "Conectando";
-  const statusState =
-    status === "live" ? "connected" :
-    status === "failed" || status === "closed" ? "disconnected" : "connecting";
-  const ping = netStats.ping;
-  const loss = netStats.loss;
+  if (!servers.length) {
+    return (
+      <PrimeiroServidor
+        go={go}
+        onCriar={criarServidor}
+        onEntrar={entrarPorLink}
+        erro={erro}
+      />
+    );
+  }
 
   return (
-    <div className={`${uiHidden?"fade":""} ${tweaks.density}`} style={{width:"100%",display:"flex",justifyContent:"center"}} data-screen-label="11 Call Room">
-      {ptt && tweaks.micMode === "ptt" && <div className="transmit">● TRANSMITINDO</div>}
-      <main className="call" style={{opacity: uiHidden?0.05:1, transition:"opacity 200ms linear"}}>
-        <header className="head">
-          <div className="brand-row">
-            <Mark size={14} />
-            <span className="bn"><b>bora</b>call</span>
-            <span className="room-crumb"><span className="slash">/</span>{activeRoom?.slug || "—"}<span className="slash">·</span><span className="mono">{mm}:{ss}</span></span>
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <CopyButton text={`${window.BC_PUBLIC_URL || "https://boracall.com"}/s/${activeRoom?.slug}`} label="convite" done="link copiado!" />
-            <Status state={statusState} label={statusLabel} />
-          </div>
-        </header>
-        {err && <div className="form-error mono" style={{margin:"8px 0"}}>{err}</div>}
-        <div className="meta">
-          <div className="meta-count">
-            <b>{users.length}</b> <span className="dim">{users.length === 1 ? "usuário" : "usuários"}</span>
-            <span className="sep" style={{margin:"0 8px"}}>·</span>
-            <b>{speakingCount}</b> <span className="dim">falando</span>
-          </div>
-          <PingMeter ping={Math.round(ping)} loss={loss} />
-        </div>
-        <div className="list">
-          {ordered.map(u => <UserRow key={u.id} user={u} isYou={!!u.isYou} />)}
-          {users.length <= 1 && (
-            <div className="empty" style={{marginTop:12}}>Ninguém mais na sala. Compartilha o link pra chamar alguém.</div>
-          )}
-        </div>
-        <div className="foot">
-          {tweaks.micMode === "ptt" ? (
-            <button className={`fbtn fbtn-ptt ${ptt?"ptt-active":""}`}
-              onMouseDown={()=>{ setPtt(true); setMuted(false); }}
-              onMouseUp={()=>{ setPtt(false); setMuted(true); }}
-              onMouseLeave={()=>{ setPtt(false); setMuted(true); }}>
-              <span className="dotmic" /><span>Segure pra falar</span><kbd>SPACE</kbd>
-            </button>
-          ) : (
-            <button className={`fbtn ${muted?"fbtn-mute-on":""}`} onClick={()=>setMuted(m=>!m)}>
-              <span className="dotmic" /><span>{muted?"Ativar mic":"Silenciar"}</span><kbd>M</kbd>
-            </button>
-          )}
-          <button className="fbtn fbtn-leave" onClick={end}>
-            <span>Sair</span><kbd>ESC</kbd>
-          </button>
-        </div>
-        <div className="keys">
-          <span className="keys-label">Atalhos</span>
-          <div className="keys-group">
-            <span><kbd>M</kbd> <span className="dim">mute</span></span>
-            <span><kbd>SPACE</kbd> <span className="dim">ptt</span></span>
-            <span><kbd>H</kbd> <span className="dim">ocultar</span></span>
-            <span><kbd>ESC</kbd> <span className="dim">sair</span></span>
-          </div>
-        </div>
-      </main>
+    <div className="app-shell">
+      <ServerRail
+        servers={servers}
+        activeSlug={activeSlug}
+        onPick={setActiveSlug}
+        onCriar={() => setModal("criar-servidor")}
+        onEntrar={() => setModal("entrar")}
+        onSettings={() => go("settings")}
+      />
+
+      <ChannelList
+        detail={detail}
+        conn={conn}
+        activeChannelId={activeChannelId}
+        voiceChannelId={voiceChannelId}
+        souDono={souDono}
+        onPick={setActiveChannelId}
+        onEntrarNaVoz={entrarNaVoz}
+        onCriarCanal={() => setModal("criar-canal")}
+        onConvidar={() => setModal("convite")}
+        session={session}
+      />
+
+      <section className="conteudo">
+        {voiceChannelId && (
+          <VoiceBar
+            canal={canalDeVoz}
+            peers={voicePeers}
+            muted={muted}
+            setMuted={setMuted}
+            onSair={sairDaVoz}
+            session={session}
+            erro={voiceErro}
+          />
+        )}
+        {canalAtivo?.kind === "text" && (
+          <TextChannel
+            key={canalAtivo.id}
+            canal={canalAtivo}
+            rt={rtRef.current}
+            session={session}
+            onLido={zerarNaoLidas}
+            onMensagemDeOutroCanal={incrementarNaoLidas}
+          />
+        )}
+        {canalAtivo?.kind === "voice" && (
+          <VoiceChannelPanel
+            canal={canalAtivo}
+            emCall={voiceChannelId === canalAtivo.id}
+            peers={voicePeers}
+            onEntrar={() => entrarNaVoz(canalAtivo)}
+            onSair={sairDaVoz}
+            erro={voiceErro}
+          />
+        )}
+        {!canalAtivo && <div className="empty" style={{margin:"auto"}}>nenhum canal selecionado</div>}
+      </section>
+
+      {modal === "criar-servidor" && (
+        <ModalSimples titulo="Novo servidor" rotulo="Nome do servidor"
+          placeholder="Time Athmos" cta="criar" onFechar={() => setModal(null)} onEnviar={criarServidor} />
+      )}
+      {modal === "entrar" && (
+        <ModalSimples titulo="Entrar por link" rotulo="Link do canal"
+          placeholder={`${publicUrl().replace(/^https?:\/\//, "")}/c/ab3kz`} cta="entrar"
+          mono onFechar={() => setModal(null)} onEnviar={entrarPorLink} />
+      )}
+      {modal === "criar-canal" && (
+        <CriarCanal onFechar={() => setModal(null)} onEnviar={criarCanal} />
+      )}
+      {modal === "convite" && (
+        <Convite detail={detail} onFechar={() => setModal(null)} />
+      )}
     </div>
   );
 }
 
-// ---------- Post-call summary ----------
-function PostCall({ go, activeRoom, callStats, onRate }) {
-  const T = STRINGS.pt;
-  const [rate, setRate] = useS2(null);
-  const d = callStats || { duration: 0, peakUsers: 1, avgPing: 0, avgLoss: 0 };
-  const speakers = (d.speakers && d.speakers.length) ? d.speakers : [];
-  const mm = Math.floor(d.duration/60); const ss = d.duration%60;
+// ---------------------------------------------------------------------------
+// Trilha de servidores
+// ---------------------------------------------------------------------------
+
+function ServerRail({ servers, activeSlug, onPick, onCriar, onEntrar, onSettings }) {
   return (
-    <div className="post">
-      <div className="post-head">
+    <nav className="rail" aria-label="Servidores">
+      {servers.map((s) => (
+        <button
+          key={s.id}
+          className={`rail-item ${s.slug === activeSlug ? "on" : ""}`}
+          title={s.name}
+          onClick={() => onPick(s.slug)}
+        >
+          {iniciais(s.name)}
+        </button>
+      ))}
+      <button className="rail-item rail-add" title="Criar servidor" onClick={onCriar}>+</button>
+      <button className="rail-item rail-add" title="Entrar por link" onClick={onEntrar}>↳</button>
+      <div style={{ marginTop: "auto" }}>
+        <button className="rail-item rail-add" title="Configurações" onClick={onSettings}>
+          <SidebarIcon name="settings" />
+        </button>
+      </div>
+    </nav>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Lista de canais
+// ---------------------------------------------------------------------------
+
+function ChannelList({
+  detail, conn, activeChannelId, voiceChannelId, souDono,
+  onPick, onEntrarNaVoz, onCriarCanal, onConvidar,
+}) {
+  if (!detail) return <aside className="canais"><div className="empty">…</div></aside>;
+
+  const texto = detail.channels.filter((c) => c.kind === "text");
+  const voz   = detail.channels.filter((c) => c.kind === "voice");
+
+  const rotuloConn =
+    conn === "open" ? "conectado" :
+    conn === "reconnecting" ? "reconectando" :
+    conn === "connecting" ? "conectando" : "desconectado";
+
+  return (
+    <aside className="canais">
+      <header className="canais-head">
         <div>
-          <h2>{T.post_title}</h2>
-          <div className="dim" style={{marginTop:4}}>{activeRoom?.name || "—"}</div>
+          <div className="srv-nome">{detail.name}</div>
+          <div className="srv-meta mono">
+            {detail.member_count} {detail.member_count === 1 ? "membro" : "membros"}
+            <span className={`conn conn-${conn === "open" ? "ok" : conn === "reconnecting" ? "wait" : "off"}`}>
+              ● {rotuloConn}
+            </span>
+          </div>
         </div>
-        <div className="when mono">há alguns segundos</div>
+        <button className="btn-ghost" title="Convidar" onClick={onConvidar}>convidar</button>
+      </header>
+
+      <div className="grupo">
+        <div className="grupo-head">
+          <span>canais de texto</span>
+          {souDono && <button className="mini" title="Novo canal" onClick={onCriarCanal}>+</button>}
+        </div>
+        {texto.map((c) => (
+          <button
+            key={c.id}
+            className={`canal ${c.id === activeChannelId ? "on" : ""} ${c.unread > 0 ? "tem-novo" : ""}`}
+            onClick={() => onPick(c.id)}
+          >
+            <span className="hash">#</span>
+            <span className="nome">{c.name}</span>
+            {c.unread > 0 && <span className="badge">{c.unread > 99 ? "99+" : c.unread}</span>}
+          </button>
+        ))}
+        {!texto.length && <div className="empty sm">nenhum canal de texto</div>}
       </div>
-      <div className="post-grid">
-        <div className="stat"><div className="k">{T.duration}</div><div className="v">{mm}<span className="sub">m</span>{String(ss).padStart(2,"0")}<span className="sub">s</span></div></div>
-        <div className="stat"><div className="k">{T.peak_users}</div><div className="v">{d.peakUsers}<span className="sub">pessoas</span></div></div>
-        <div className="stat"><div className="k">{T.avg_ping}</div><div className="v">{d.avgPing}<span className="sub">ms</span></div></div>
-        <div className="stat"><div className="k">{T.avg_loss}</div><div className="v">{d.avgLoss.toFixed(1)}<span className="sub">%</span></div></div>
+
+      <div className="grupo">
+        <div className="grupo-head"><span>canais de voz</span></div>
+        {voz.map((c) => (
+          <div key={c.id} className="canal-voz-wrap">
+            <button
+              className={`canal ${c.id === activeChannelId ? "on" : ""}`}
+              onClick={() => onPick(c.id)}
+              onDoubleClick={() => onEntrarNaVoz(c)}
+              title="Duplo clique entra na call"
+            >
+              <span className="hash">🔊</span>
+              <span className="nome">{c.name}</span>
+              {c.live > 0 && <span className="live-dot mono">{c.live}</span>}
+              {c.id === voiceChannelId && <span className="voce mono">você</span>}
+            </button>
+          </div>
+        ))}
+        {!voz.length && <div className="empty sm">nenhum canal de voz</div>}
       </div>
-      <div className="post-body">
-        <div className="label">{T.participants}</div>
-        <div>
-          {speakers.map((s, i) => (
-            <div key={i} className="attendee">
-              <span className="initials sm">{s.name.split(" ").map(x=>x[0]).join("").slice(0,2).toUpperCase()}</span>
-              <div style={{flex:1}}>
-                <div style={{fontSize:13}}>{s.name}</div>
-                <div className="quality-bar" style={{marginTop:6}}>
-                  <div className="quality-fill" style={{width: `${s.pct}%`}} />
-                </div>
-              </div>
-              <span className="t">{s.talkedSec}s falando</span>
+    </aside>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Canal de texto
+// ---------------------------------------------------------------------------
+
+function TextChannel({ canal, rt, session, onLido, onMensagemDeOutroCanal }) {
+  const [mensagens, setMensagens] = useS2([]);
+  const [cursor, setCursor] = useS2(null);
+  const [carregando, setCarregando] = useS2(true);
+  const [carregandoMais, setCarregandoMais] = useS2(false);
+  const [texto, setTexto] = useS2("");
+  const [erro, setErro] = useS2("");
+  const listaRef = useR2(null);
+  const noFimRef = useR2(true);
+
+  // --- histórico inicial ---------------------------------------------------
+  useE2(() => {
+    let vivo = true;
+    setCarregando(true);
+    window.api.listMessages(canal.slug, { limit: 50 })
+      .then((p) => {
+        if (!vivo) return;
+        // A API devolve mais novas primeiro; a tela renderiza de cima pra baixo.
+        setMensagens([...p.messages].reverse());
+        setCursor(p.next_before);
+        setCarregando(false);
+      })
+      .catch((e) => { if (vivo) { setErro(e.message || "não deu pra carregar"); setCarregando(false); } });
+    return () => { vivo = false; };
+  }, [canal.slug]);
+
+  // --- tempo real ----------------------------------------------------------
+  useE2(() => {
+    if (!rt) return;
+    const offs = [
+      rt.on("message", (m) => {
+        if (m.channel_id !== canal.id) { onMensagemDeOutroCanal(m.channel_id); return; }
+        setMensagens((prev) => (prev.some((x) => x.id === m.message.id) ? prev : [...prev, m.message]));
+      }),
+      rt.on("message_updated", (m) => {
+        if (m.channel_id !== canal.id) return;
+        setMensagens((prev) => prev.map((x) => (x.id === m.message.id ? m.message : x)));
+      }),
+      rt.on("message_deleted", (m) => {
+        if (m.channel_id !== canal.id) return;
+        setMensagens((prev) => prev.filter((x) => x.id !== m.message_id));
+      }),
+    ];
+    return () => offs.forEach((off) => off());
+  }, [rt, canal.id, onMensagemDeOutroCanal]);
+
+  // --- rolagem -------------------------------------------------------------
+  // Só cola no fim se o usuário já estava no fim. Puxar histórico e ser jogado
+  // pra baixo por uma mensagem nova é o jeito mais rápido de irritar alguém.
+  useE2(() => {
+    const el = listaRef.current;
+    if (el && noFimRef.current) el.scrollTop = el.scrollHeight;
+  }, [mensagens]);
+
+  const aoRolar = () => {
+    const el = listaRef.current;
+    if (!el) return;
+    noFimRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    if (el.scrollTop < 60 && cursor && !carregandoMais) carregarMais();
+  };
+
+  const carregarMais = async () => {
+    const el = listaRef.current;
+    if (!el || !cursor) return;
+    setCarregandoMais(true);
+    const alturaAntes = el.scrollHeight;
+    try {
+      const p = await window.api.listMessages(canal.slug, { before: cursor, limit: 50 });
+      setMensagens((prev) => [...[...p.messages].reverse(), ...prev]);
+      setCursor(p.next_before);
+      // Mantém o ponto de leitura: sem isso a lista salta ao inserir por cima.
+      requestAnimationFrame(() => { el.scrollTop = el.scrollHeight - alturaAntes; });
+    } catch (e) {
+      setErro(e.message || "não deu pra carregar mais");
+    } finally {
+      setCarregandoMais(false);
+    }
+  };
+
+  // --- marcar lido ---------------------------------------------------------
+  useE2(() => {
+    if (carregando || !mensagens.length) return;
+    const ultima = mensagens[mensagens.length - 1];
+    window.api.markRead(canal.slug, ultima.id).then(() => onLido(canal.id)).catch(() => {});
+  }, [carregando, mensagens.length, canal.slug, canal.id, onLido]);
+
+  const enviar = async () => {
+    const corpo = texto.trim();
+    if (!corpo) return;
+    setTexto("");
+    noFimRef.current = true;
+    try {
+      const m = await window.api.sendMessage(canal.slug, corpo);
+      setMensagens((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
+    } catch (e) {
+      setErro(e.message || "não deu pra enviar");
+      setTexto(corpo); // devolve o texto pro campo em vez de sumir com ele
+    }
+  };
+
+  return (
+    <div className="chat">
+      <header className="chat-head">
+        <span className="hash">#</span>
+        <b>{canal.name}</b>
+        <CopyButton
+          text={`${publicUrl()}/c/${canal.slug}`}
+          label="link do canal"
+          done="link copiado!"
+          style={{ marginLeft: "auto" }}
+        />
+      </header>
+
+      <div className="msgs" ref={listaRef} onScroll={aoRolar}>
+        {carregandoMais && <div className="empty sm">carregando mais…</div>}
+        {!carregando && !cursor && (
+          <div className="inicio mono">— começo de #{canal.name} —</div>
+        )}
+        {carregando && <div className="empty">carregando…</div>}
+        {!carregando && !mensagens.length && (
+          <div className="empty">Ninguém falou nada aqui ainda. Começa você.</div>
+        )}
+        {mensagens.map((m, i) => {
+          const anterior = mensagens[i - 1];
+          const agrupada = anterior && anterior.user_id === m.user_id &&
+            new Date(m.created_at) - new Date(anterior.created_at) < 5 * 60 * 1000;
+          return (
+            <Mensagem
+              key={m.id}
+              m={m}
+              agrupada={agrupada}
+              minha={m.user_id === session.id}
+              onApagar={async () => {
+                try {
+                  await window.api.deleteMessage(m.id);
+                  setMensagens((prev) => prev.filter((x) => x.id !== m.id));
+                } catch (e) { setErro(e.message || "não deu pra apagar"); }
+              }}
+            />
+          );
+        })}
+      </div>
+
+      {erro && <div className="form-error mono" style={{ margin: "0 16px" }}>{erro}</div>}
+
+      <div className="composer">
+        <input
+          className="input"
+          placeholder={`escreve em #${canal.name}…`}
+          value={texto}
+          maxLength={4000}
+          onChange={(e) => { setTexto(e.target.value); setErro(""); }}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }}
+        />
+        <button className="btn-primary" disabled={!texto.trim()} onClick={enviar}>enviar</button>
+      </div>
+    </div>
+  );
+}
+
+function Mensagem({ m, agrupada, minha, onApagar }) {
+  const hora = new Date(m.created_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  return (
+    <div className={`msg ${agrupada ? "agrupada" : ""}`}>
+      {!agrupada && <span className="initials sm">{iniciais(m.display_name)}</span>}
+      <div className="msg-corpo">
+        {!agrupada && (
+          <div className="msg-head">
+            <b>{m.display_name || "alguém"}</b>
+            <span className="mono dim">{hora}</span>
+            {m.edited_at && <span className="mono dim">(editada)</span>}
+          </div>
+        )}
+        <div className="msg-texto">{m.body}</div>
+      </div>
+      {minha && <button className="msg-x" title="Apagar" onClick={onApagar}>×</button>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Canal de voz
+// ---------------------------------------------------------------------------
+
+function VoiceChannelPanel({ canal, emCall, peers, onEntrar, onSair, erro }) {
+  return (
+    <div className="voz-painel">
+      <header className="chat-head">
+        <span className="hash">🔊</span>
+        <b>{canal.name}</b>
+        <CopyButton
+          text={`${publicUrl()}/c/${canal.slug}`}
+          label="link do canal"
+          done="link copiado!"
+          style={{ marginLeft: "auto" }}
+        />
+      </header>
+      <div className="voz-centro">
+        <div className="voz-count mono">
+          {canal.live || 0} {canal.live === 1 ? "pessoa" : "pessoas"} no canal
+        </div>
+        {emCall ? (
+          <>
+            <div className="list" style={{ width: "100%", maxWidth: 420 }}>
+              {peers.map((p) => (
+                <UserRow key={p.id} user={{ ...p, state: p.muted ? "muted" : (p.level > 0.05 ? "speaking" : "listening") }} />
+              ))}
+              {!peers.length && <div className="empty">Só você por aqui. Compartilha o link do canal.</div>}
+            </div>
+            <button className="fbtn fbtn-leave" onClick={onSair}>Sair da call</button>
+          </>
+        ) : (
+          <button className="btn-primary" onClick={onEntrar}>Entrar na call</button>
+        )}
+        {erro && <div className="form-error mono">{erro}</div>}
+      </div>
+    </div>
+  );
+}
+
+/// Barra fixa de call — fica visível mesmo navegando pra outro canal.
+function VoiceBar({ canal, peers, muted, setMuted, onSair, session, erro }) {
+  const falando = peers.filter((p) => !p.muted && p.level > 0.05).length;
+  return (
+    <div className="voz-bar">
+      <span className="dotmic" />
+      <div className="vb-info">
+        <b>{canal?.name || "call"}</b>
+        <span className="mono dim">
+          {peers.length + 1} na call{falando ? ` · ${falando} falando` : ""}
+        </span>
+      </div>
+      {erro && <span className="form-error mono" style={{ padding: "2px 8px" }}>{erro}</span>}
+      <button className={`fbtn ${muted ? "fbtn-mute-on" : ""}`} onClick={() => setMuted(!muted)}>
+        {muted ? "Ativar mic" : "Silenciar"} <kbd>M</kbd>
+      </button>
+      <button className="fbtn fbtn-leave" onClick={onSair}>Sair</button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Primeiro acesso — ninguém tem servidor ainda
+// ---------------------------------------------------------------------------
+
+function PrimeiroServidor({ onCriar, onEntrar, erro }) {
+  const [nome, setNome] = useS2("");
+  const [link, setLink] = useS2("");
+  const [busy, setBusy] = useS2(false);
+  const [err, setErr] = useS2("");
+
+  const tentar = async (fn, arg) => {
+    setBusy(true); setErr("");
+    try { await fn(arg); } catch (e) { setErr(e.message || "não deu certo"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="auth" style={{ maxWidth: 460, margin: "auto" }}>
+      <div className="auth-head">
+        <h2>Cria teu primeiro servidor</h2>
+        <div className="sub">Um servidor guarda teus canais de texto e de voz.</div>
+      </div>
+      <div className="auth-body">
+        <label className="label">nome do servidor</label>
+        <input className="input" placeholder="Time Athmos" value={nome}
+          onChange={(e) => setNome(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && nome.trim().length >= 2) tentar(onCriar, nome.trim()); }} />
+        <button className="btn-primary" disabled={nome.trim().length < 2 || busy}
+          onClick={() => tentar(onCriar, nome.trim())}>
+          {busy ? "criando…" : "criar servidor"}
+        </button>
+
+        <div className="divider" style={{ margin: "14px 0" }} />
+
+        <label className="label">ou entra num que te convidaram</label>
+        <input className="input mono" placeholder="cola o link do canal" value={link}
+          onChange={(e) => setLink(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && link.trim()) tentar(onEntrar, link.trim()); }} />
+        <button className="btn-line" disabled={!link.trim() || busy}
+          onClick={() => tentar(onEntrar, link.trim())}>entrar</button>
+
+        {(err || erro) && <div className="form-error mono">{err || erro}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modais
+// ---------------------------------------------------------------------------
+
+function ModalSimples({ titulo, rotulo, placeholder, cta, mono, onFechar, onEnviar }) {
+  const [v, setV] = useS2("");
+  const [busy, setBusy] = useS2(false);
+  const [err, setErr] = useS2("");
+
+  const enviar = async () => {
+    if (!v.trim() || busy) return;
+    setBusy(true); setErr("");
+    try { await onEnviar(v.trim()); }
+    catch (e) { setErr(e.message || "não deu certo"); setBusy(false); }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onFechar}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>{titulo}</h3>
+          <button className="x" onClick={onFechar}>×</button>
+        </div>
+        <div className="modal-body">
+          <div className="label">{rotulo}</div>
+          <input className={`input ${mono ? "mono" : ""}`} placeholder={placeholder} value={v} autoFocus
+            onChange={(e) => { setV(e.target.value); setErr(""); }}
+            onKeyDown={(e) => { if (e.key === "Enter") enviar(); }} />
+          {err && <div className="form-error mono">{err}</div>}
+        </div>
+        <div className="modal-foot">
+          <button className="btn-ghost" onClick={onFechar}>cancelar</button>
+          <button className="btn-primary" disabled={!v.trim() || busy} onClick={enviar}>
+            {busy ? "…" : cta}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CriarCanal({ onFechar, onEnviar }) {
+  const [nome, setNome] = useS2("");
+  const [tipo, setTipo] = useS2("text");
+  const [busy, setBusy] = useS2(false);
+  const [err, setErr] = useS2("");
+
+  const enviar = async () => {
+    if (!nome.trim() || busy) return;
+    setBusy(true); setErr("");
+    try { await onEnviar({ nome: nome.trim(), tipo }); }
+    catch (e) { setErr(e.message || "não deu certo"); setBusy(false); }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onFechar}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>Novo canal</h3>
+          <button className="x" onClick={onFechar}>×</button>
+        </div>
+        <div className="modal-body">
+          <div className="label">tipo</div>
+          <div className="seg" style={{ marginTop: 6 }}>
+            <button className={`seg-btn ${tipo === "text" ? "seg-on" : ""}`} onClick={() => setTipo("text")}># texto</button>
+            <button className={`seg-btn ${tipo === "voice" ? "seg-on" : ""}`} onClick={() => setTipo("voice")}>🔊 voz</button>
+          </div>
+          <div className="label" style={{ marginTop: 12 }}>nome</div>
+          <input className="input" placeholder={tipo === "text" ? "deploys" : "Pair"} value={nome} autoFocus
+            maxLength={32}
+            onChange={(e) => { setNome(e.target.value); setErr(""); }}
+            onKeyDown={(e) => { if (e.key === "Enter") enviar(); }} />
+          {err && <div className="form-error mono">{err}</div>}
+        </div>
+        <div className="modal-foot">
+          <button className="btn-ghost" onClick={onFechar}>cancelar</button>
+          <button className="btn-primary" disabled={!nome.trim() || busy} onClick={enviar}>criar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Convite({ detail, onFechar }) {
+  const voz = (detail?.channels || []).filter((c) => c.kind === "voice");
+  const texto = (detail?.channels || []).filter((c) => c.kind === "text");
+  const base = publicUrl();
+  return (
+    <div className="modal-overlay" onClick={onFechar}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>Convidar pro {detail?.name}</h3>
+          <button className="x" onClick={onFechar}>×</button>
+        </div>
+        <div className="modal-body">
+          <div className="dim" style={{ fontSize: 12 }}>
+            Quem abrir o link entra no servidor e cai direto no canal.
+          </div>
+          {[...voz, ...texto].map((c) => (
+            <div key={c.id} className="link-row">
+              <span className="hash">{c.kind === "voice" ? "🔊" : "#"}</span>
+              <span className="nome">{c.name}</span>
+              <CopyButton text={`${base}/c/${c.slug}`} label="copiar" done="copiado!" />
             </div>
           ))}
         </div>
-
-        <div>
-          <div className="label" style={{marginBottom:6}}>{T.rate_call}</div>
-          <div className="rate-row">
-            {[1,2,3,4,5].map(n => (
-              <button key={n} className={`rate-btn ${rate>=n?"on":""}`} onClick={()=>setRate(n)}>{n}</button>
-            ))}
-            <span className="dim mono" style={{marginLeft:8}}>{rate?(rate<=2?T.rate_bad:rate<=3?T.rate_ok:T.rate_good):"—"}</span>
-          </div>
-        </div>
-
-        <div style={{display:"flex",gap:8,marginTop:8}}>
-          <button className="btn-line" onClick={()=>go("dashboard")}>{T.back_to_rooms}</button>
-          <button className="btn-primary" onClick={()=>go("call")}>{T.call_again}</button>
+        <div className="modal-foot">
+          <button className="btn-ghost" onClick={onFechar}>fechar</button>
         </div>
       </div>
     </div>
   );
 }
-// ---------- Settings ----------
+
+// ---------------------------------------------------------------------------
+// Configurações
+// ---------------------------------------------------------------------------
+
 function Settings({ go, session, setSession, tweaks, setTweak }) {
-  const T = STRINGS.pt;
-  const [tab, setTab] = useS2("profile");
-  const [name, setName] = useS2(session.displayName || "Você");
+  const [tab, setTab] = useS2("perfil");
+  const [nome, setNome] = useS2(session.displayName || "");
+  const [salvando, setSalvando] = useS2(false);
+  const [msg, setMsg] = useS2("");
+  const [err, setErr] = useS2("");
+
+  // Salvar precisa ir pro servidor: mexer só no estado local faz o nome voltar
+  // sozinho no próximo boot, porque o boot lê de api.me().
+  const salvar = async () => {
+    setSalvando(true); setErr(""); setMsg("");
+    try {
+      const u = await window.api.updateMe({ displayName: nome.trim() });
+      setSession((s) => ({ ...s, displayName: u.display_name }));
+      setMsg("salvo");
+    } catch (e) {
+      setErr(e.message || "não deu pra salvar");
+    } finally {
+      setSalvando(false);
+    }
+  };
 
   return (
     <div className="settings">
@@ -582,98 +863,56 @@ function Settings({ go, session, setSession, tweaks, setTweak }) {
           <span className="bn"><b>bora</b>call</span>
           <span className="room-crumb"><span className="slash">/</span>configurações</span>
         </div>
-        <button className="btn-ghost" onClick={()=>go("dashboard")}>← voltar</button>
+        <button className="btn-ghost" onClick={() => go("app")}>← voltar</button>
       </div>
       <div className="set-tabs">
-        {[["profile",T.tab_profile],["audio",T.tab_audio],["shortcuts",T.tab_shortcuts],["preferences","preferências"],["account",T.tab_account]].map(([k,l])=>(
-          <button key={k} className={`set-tab ${tab===k?"on":""}`} onClick={()=>setTab(k)}>{l}</button>
+        {[["perfil", "perfil"], ["preferencias", "preferências"], ["conta", "conta"]].map(([k, l]) => (
+          <button key={k} className={`set-tab ${tab === k ? "on" : ""}`} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
       <div className="set-body">
-        {tab === "profile" && (
+        {tab === "perfil" && (
           <>
             <div className="set-row">
-              <div className="k">Nome <span className="d">aparece pros outros na call</span></div>
-              <input className="input" value={name} onChange={(e)=>setName(e.target.value)} />
+              <div className="k">Nome <span className="d">aparece pros outros nos canais</span></div>
+              <input className="input" value={nome} maxLength={64}
+                onChange={(e) => { setNome(e.target.value); setMsg(""); }} />
               <span />
             </div>
             <div className="set-row">
               <div className="k">E-mail <span className="d">usado pra login</span></div>
-              <div className="mono dim">{session.email || "voce@empresa.com"}</div>
-              <button className="btn-line">alterar</button>
-            </div>
-            <div className="set-row">
-              <div className="k">Foto <span className="d">opcional — iniciais por padrão</span></div>
-              <div className="row gap-3">
-                <span className="initials lg">{name.split(" ").map(s=>s[0]).join("").slice(0,2).toUpperCase()}</span>
-                <span className="dim">Sem foto · usa iniciais</span>
-              </div>
-              <button className="btn-line">upload</button>
-            </div>
-            <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:8}}>
-              <button className="btn-ghost" onClick={()=>go("dashboard")}>{T.cancel}</button>
-              <button className="btn-primary" onClick={()=>{ setSession(s=>({...s,displayName:name})); go("dashboard"); }}>{T.save}</button>
-            </div>
-          </>
-        )}
-        {tab === "audio" && (
-          <>
-            <div className="set-row">
-              <div className="k">{T.input_device}</div>
-              <div className="mono">MacBook Pro Mic</div>
-              <button className="btn-line">mudar</button>
-            </div>
-            <div className="set-row">
-              <div className="k">{T.output_device}</div>
-              <div className="mono">AirPods Pro</div>
-              <button className="btn-line">mudar</button>
-            </div>
-            <AudioToggle label={T.noise_sup} hint="remove ruídos de fundo (ventilador, teclado)" />
-            <AudioToggle label={T.echo_can} hint="cancela o eco do alto-falante" defaultOn />
-            <AudioToggle label={T.auto_gain} hint="normaliza o volume do microfone" />
-            <AudioToggle label="Modo PTT por padrão" hint="entra nas calls com push-to-talk" />
-          </>
-        )}
-        {tab === "shortcuts" && (
-          <>
-            <ShortcutRow k="M" d="Alternar mute" />
-            <ShortcutRow k="SPACE" d="Push-to-talk (segurar)" />
-            <ShortcutRow k="H" d="Ocultar/mostrar interface" />
-            <ShortcutRow k="ESC" d="Sair da call" />
-            <ShortcutRow k="?" d="Mostrar atalhos" />
-            <ShortcutRow k="CMD + K" d="Buscar sala ou pessoa" />
-          </>
-        )}
-        {tab === "preferences" && (
-          <TweaksPanel tweaks={tweaks} setTweak={setTweak} />
-        )}
-        {tab === "account" && (
-          <>
-            <div className="set-row">
-              <div className="k">Plano <span className="d">até 20 pessoas por sala</span></div>
-              <div className="mono">Grátis</div>
-              <button className="btn-line">upgrade</button>
-            </div>
-            <div className="set-row">
-              <div className="k">Sessões ativas <span className="d">dispositivos conectados agora</span></div>
-              <div className="mono">2 dispositivos</div>
-              <button className="btn-line">ver</button>
-            </div>
-            <div className="divider" style={{margin:"10px 0"}} />
-            <div className="set-row">
-              <div className="k" style={{color:"var(--fg-dim)"}}>{T.sign_out}</div>
+              <div className="mono dim">{session.email}</div>
               <span />
-              <button className="btn-line" onClick={()=>{
+            </div>
+            {err && <div className="form-error mono">{err}</div>}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8, alignItems: "center" }}>
+              {msg && <span className="mono dim">{msg}</span>}
+              <button className="btn-primary" disabled={nome.trim().length < 1 || salvando} onClick={salvar}>
+                {salvando ? "salvando…" : "salvar"}
+              </button>
+            </div>
+          </>
+        )}
+        {tab === "preferencias" && <TweaksPanel tweaks={tweaks} setTweak={setTweak} />}
+        {tab === "conta" && (
+          <>
+            <div className="set-row">
+              <div className="k">Limite por canal de voz
+                <span className="d">a chamada é P2P — acima disso o áudio degrada</span></div>
+              <div className="mono">até 6 pessoas</div>
+              <span />
+            </div>
+            <div className="divider" style={{ margin: "10px 0" }} />
+            <div className="set-row">
+              <div className="k" style={{ color: "var(--fg-dim)" }}>Sair da conta</div>
+              <span />
+              <button className="btn-line" onClick={() => {
                 try { window.api.logout(); } catch {}
+                try { localStorage.removeItem("bc_server"); } catch {}
                 setSession({ email: "", displayName: "", id: null });
                 go("landing");
               }}>sair</button>
             </div>
-            <div className="set-row">
-              <div className="k" style={{color:"var(--bad)"}}>{T.delete_acc} <span className="d">remove permanentemente</span></div>
-              <span />
-              <button className="btn-line" style={{borderColor:"var(--bad)",color:"var(--bad)"}}>apagar</button>
-            </div>
           </>
         )}
       </div>
@@ -681,28 +920,7 @@ function Settings({ go, session, setSession, tweaks, setTweak }) {
   );
 }
 
-function ShortcutRow({ k, d }) {
-  return (
-    <div className="set-row">
-      <div className="k">{d}</div>
-      <span />
-      <kbd>{k}</kbd>
-    </div>
-  );
-}
-
-function AudioToggle({ label, hint, defaultOn }) {
-  const [on, setOn] = useS2(!!defaultOn);
-  return (
-    <div className="set-row">
-      <div className="k">{label} <span className="d">{hint}</span></div>
-      <span className="dim mono">{on?"ativo":"desligado"}</span>
-      <div className="seg">
-        <button className={`seg-btn ${!on?"seg-on":""}`} onClick={()=>setOn(false)}>off</button>
-        <button className={`seg-btn ${on?"seg-on":""}`} onClick={()=>setOn(true)}>on</button>
-      </div>
-    </div>
-  );
-}
-
-Object.assign(window, { CreateRoom, JoinByLink, InviteLanding, PreCall, Call, PostCall, Settings });
+Object.assign(window, {
+  AppShell, ServerRail, ChannelList, TextChannel, Mensagem,
+  VoiceChannelPanel, VoiceBar, PrimeiroServidor, ModalSimples, CriarCanal, Convite, Settings,
+});

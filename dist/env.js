@@ -1,10 +1,13 @@
-// BoraCall — runtime env bag. Overridden at deploy time (CI can rewrite this
-// file before packaging) to point the desktop at a production backend.
+// BoraCall — configuração de runtime.
 //
-// Production build: points at the public VPS backend (boracall.com, behind Cloudflare).
-// For local dev, set window.BC_API_URL in devtools console to
-// "http://127.0.0.1:3030" before the page boots, or rebuild with that value.
+// O padrão é o backend LOCAL. O build de produção sobrescreve este arquivo
+// inteiro (passo "Bake production env.js" no .github/workflows/release.yml)
+// antes de empacotar, então o valor daqui nunca chega no bundle publicado.
+//
+// Já foi o contrário — este arquivo vinha apontando pra api.boracall.com — e o
+// efeito era que abrir o app em desenvolvimento mandava cadastro e mensagem pro
+// banco de produção sem nenhum aviso.
 (function () {
-  window.BC_API_URL    = window.BC_API_URL    || "https://api.boracall.com";
-  window.BC_PUBLIC_URL = window.BC_PUBLIC_URL || "https://boracall.com";
+  window.BC_API_URL    = window.BC_API_URL    || "http://127.0.0.1:3030";
+  window.BC_PUBLIC_URL = window.BC_PUBLIC_URL || "http://127.0.0.1:3030";
 })();
