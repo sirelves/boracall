@@ -1,0 +1,5 @@
+# Script de shell nasce e viaja com LF. No runner de Windows o checkout
+# converteria pra CRLF, e o arquivo enviado pro VPS quebrava no shebang com
+# "/usr/bin/env: 'bash\r': No such file or directory".
+*.sh text eol=lf
+*.mjs text eol=lf
