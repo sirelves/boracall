@@ -130,7 +130,7 @@ jobs:
 
       # Coleta tudo que esse runner produziu num diretório uniforme pra upload.
       # Inclui instaladores (.dmg/.msi/.exe/.AppImage/.deb/.rpm) + artefatos do
-      # updater (.app.tar.gz, .AppImage.tar.gz, .nsis.zip/.msi.zip) + .sig de cada.
+      # updater (ver o passo Collect) + a assinatura de cada.
       # Coleta o que este runner produziu num diretório uniforme.
       #
       # Os artefatos do updater ganham prefixo da plataforma: os dois jobs de
@@ -160,18 +160,29 @@ jobs:
             done
           done
 
-          # Artefatos do updater + assinatura, prefixados pela plataforma.
-          # A busca é por extensão em vez de caminho fixo pra não depender de
-          # onde cada versão do Tauri resolve colocá-los.
+          # Artefatos do updater.
+          #
+          # Nesta versão do Tauri, só o macOS empacota (.app.tar.gz). No Linux e
+          # no Windows o INSTALADOR é o artefato de updater, assinado direto —
+          # não existe .AppImage.tar.gz nem .nsis.zip. Procurar por esses nomes
+          # era o motivo de Windows e Linux nunca entrarem no latest.json.
+          #
+          # O .app.tar.gz do macOS tem o mesmo nome nas duas arquiteturas, então
+          # esse leva prefixo. Os de Linux e Windows já carregam versão e arch no
+          # nome e não colidem.
           while IFS= read -r f; do
             [ -f "$f" ] || continue
             cp "$f" "dist-release/${PLAT}-$(basename "$f")"
-            echo "updater: ${PLAT}-$(basename "$f")"
+            echo "updater (macos, prefixado): ${PLAT}-$(basename "$f")"
           done < <(find "$BUNDLE_ROOT" -type f \( \
-                     -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' -o \
-                     -name '*.AppImage.tar.gz' -o -name '*.AppImage.tar.gz.sig' -o \
-                     -name '*.nsis.zip' -o -name '*.nsis.zip.sig' -o \
-                     -name '*.msi.zip' -o -name '*.msi.zip.sig' \) 2>/dev/null)
+                     -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \) 2>/dev/null)
+
+          while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            cp "$f" dist-release/
+            echo "assinatura do updater: $(basename "$f")"
+          done < <(find "$BUNDLE_ROOT" -type f \( \
+                     -name '*.AppImage.sig' -o -name '*-setup.exe.sig' \) 2>/dev/null)
 
           echo "== artefatos de ${PLAT} =="
           ls -lah dist-release/
@@ -262,9 +273,7 @@ jobs:
           # … e os artefatos do updater, que mantêm o prefixo da plataforma.
           find artifacts -type f \( \
             -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' -o \
-            -name '*.AppImage.tar.gz' -o -name '*.AppImage.tar.gz.sig' -o \
-            -name '*.nsis.zip' -o -name '*.nsis.zip.sig' -o \
-            -name '*.msi.zip' -o -name '*.msi.zip.sig' \) \
+            -name '*.AppImage.sig' -o -name '*-setup.exe.sig' \) \
             -exec cp -n {} envio/ \;
 
           echo "== enviando =="; ls -lah envio/
@@ -306,8 +315,8 @@ jobs:
             chown www-data:www-data SHA256SUMS && cat SHA256SUMS"
 
       # Gera latest.json pro tauri-plugin-updater. Lê os .sig dos artifacts,
-      # embute no JSON e uploada pro VPS. Os bundles .app.tar.gz / .AppImage.tar.gz
-      # / .nsis.zip já foram uploadados pelos jobs de build.
+      # embute no JSON e uploada pro VPS. Os arquivos que o updater baixa já
+      # subiram no passo de envio.
       - name: Build & upload latest.json
         if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
         env:
@@ -343,12 +352,14 @@ jobs:
           DARWIN_X86=$(platform_json \
             "$(find_one artifacts/boracall-macos-intel 'macos-intel-*.app.tar.gz')" \
             "$(find_one artifacts/boracall-macos-intel 'macos-intel-*.app.tar.gz.sig')")
+          # No Linux e no Windows o updater baixa o próprio instalador — o .sig
+          # é que é o artefato extra.
           LINUX_X86=$(platform_json \
-            "$(find_one artifacts/boracall-linux 'linux-*.AppImage.tar.gz')" \
-            "$(find_one artifacts/boracall-linux 'linux-*.AppImage.tar.gz.sig')")
+            "$(find_one artifacts/boracall-linux '*.AppImage')" \
+            "$(find_one artifacts/boracall-linux '*.AppImage.sig')")
           WIN_X86=$(platform_json \
-            "$(find_one artifacts/boracall-windows 'windows-*.nsis.zip')" \
-            "$(find_one artifacts/boracall-windows 'windows-*.nsis.zip.sig')")
+            "$(find_one artifacts/boracall-windows '*-setup.exe')" \
+            "$(find_one artifacts/boracall-windows '*-setup.exe.sig')")
 
           # Publicar um latest.json faltando plataforma é pior que não publicar:
           # o updater daquela plataforma nunca mais oferece atualização, e nada
