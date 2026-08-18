@@ -1,26 +1,38 @@
 <!--
-Thanks for contributing to BoraCall!
+Obrigado por contribuir com o BoraCall!
 
-If the change is non-trivial, please open an issue first so we can align
-before you invest time. See CONTRIBUTING.md.
+Mudança grande? Abra uma issue antes, para alinhar o rumo sem você gastar
+tempo à toa. Veja o CONTRIBUTING.md.
 -->
 
-## What this PR does
+## O que este PR faz
 
-<!-- One or two sentences explaining the change and the motivation. -->
+<!-- Uma ou duas frases: a mudança e o motivo dela. -->
 
-## Related issue
+## Issue relacionada
 
 Closes #
 
 ## Checklist
 
-- [ ] `cargo fmt` + `cargo clippy --workspace --all-targets -- -D warnings` are clean
-- [ ] No new secrets, tokens, or internal hostnames in code or comments
-- [ ] New config via env vars documented in `.env.example`
-- [ ] Docs updated (`README.md` / `ARCHITECTURE.md` / `HANDOFF.md`) if behavior or API changed
-- [ ] Manually verified (describe below)
+<!-- Marque o que se aplica. Item que não faz sentido no seu PR, risque. -->
 
-## How I tested
+- [ ] `cargo fmt -p boracall-server` e `cargo clippy -p boracall-server --all-targets -- -D warnings` limpos
+- [ ] `cargo test -p boracall-server` passa
+- [ ] **Mexeu em query SQL?** Rodou `cargo sqlx prepare --workspace -- -p boracall-server --all-targets` e commitou o `.sqlx/`
+- [ ] Configuração nova por variável de ambiente está no `.env.example`
+- [ ] Nenhum segredo, token ou hostname interno no código ou nos comentários
+- [ ] Documentação atualizada (`README.md` / `ARCHITECTURE.md` / `CONTRIBUTING.md`) se o comportamento ou a API mudou
 
-<!-- Which platforms, which scenarios. "Local dev with two Tauri instances on macOS" is fine. -->
+## Como você testou
+
+<!--
+Diga o que rodou de verdade. Exemplos do que conta:
+
+  cargo test -p boracall-server -- --ignored     # precisa de Postgres
+  node scripts/smoke-ws.mjs                      # signaling com dois sockets
+  node scripts/smoke-audio.mjs                   # áudio real entre dois navegadores
+  RELAY_ONLY=1 node scripts/smoke-audio.mjs      # forçando o TURN
+
+Mexeu no front? Diga em qual sistema abriu o app e o que clicou.
+-->

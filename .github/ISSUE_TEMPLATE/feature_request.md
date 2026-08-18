@@ -1,18 +1,26 @@
 ---
-name: Feature request
-about: Suggest an improvement or a new capability
+name: Sugerir uma melhoria
+about: Uma capacidade nova ou uma mudança de comportamento
 title: ''
 labels: enhancement
 assignees: ''
 ---
 
-**The problem**
-<!-- What's frustrating today, or what's missing? Lead with the user pain, not the solution. -->
+**O problema**
+<!--
+O que incomoda hoje, ou o que falta? Comece pela dor, não pela solução —
+saber o problema real costuma mudar qual solução faz sentido.
+-->
 
-**Proposed solution**
-<!-- What would "good" look like? Mock-ups, API sketches, or prose — whatever is fastest. -->
+**Solução proposta**
+<!-- Como seria o "bom"? Rascunho de tela, esboço de API ou texto corrido. -->
 
-**Alternatives considered**
+**Alternativas que você considerou**
 
-**Scope**
-<!-- Small tweak? New screen? Architectural change? Helps triage whether this fits a patch release or a bigger milestone. -->
+**Tamanho**
+<!--
+Ajuda a priorizar: ajuste pequeno, tela nova, ou mudança de arquitetura?
+Se envolver chamada de voz com mais gente, vale saber: hoje o áudio é
+peer-to-peer (mesh) e satura acima de ~6 por canal — grupos maiores
+dependem de um SFU, que é trabalho grande.
+-->

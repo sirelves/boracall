@@ -235,13 +235,22 @@ Escala horizontal (trait `SignalBus` com impl `NatsBus`, sticky sessions no LB, 
 
 ## Contribuindo
 
+Issues com a etiqueta [`good first issue`](https://github.com/sirelves/boracall/labels/good%20first%20issue)
+são o melhor ponto de partida — escopo fechado, com o arquivo e a abordagem
+indicados no corpo.
+
+- [CONTRIBUTING.md](./CONTRIBUTING.md) — como rodar, convenções e o que verificar antes do PR
+- [SECURITY.md](./SECURITY.md) — como relatar vulnerabilidade (nunca em issue pública)
+- [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
+
+
 O projeto é open source sob **MIT**. Abra uma issue antes de mandar PR grande — adoro ideias mas não quero te fazer perder tempo. Detalhes em [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 Áreas que agradecem ajuda:
-- TURN / SFU integration
-- Windows/Linux QA (codecs WebRTC quirks)
-- Translations (hoje só PT-BR)
-- Acessibilidade (screen reader no call)
+- QA de Windows e Linux (os codecs de WebRTC variam por webview)
+- SFU, pra chamada com mais de ~6 pessoas por canal
+- Tradução (hoje só PT-BR)
+- Acessibilidade (leitor de tela no fluxo de chamada)
 
 ---
 
