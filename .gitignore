@@ -41,3 +41,6 @@ dist/env.js.devbak
 
 # artefatos do playwright-mcp (screenshots de verificação)
 .playwright-mcp/
+
+# membro de workspace não usa lock próprio — o da raiz é o que vale
+src-tauri/Cargo.lock
