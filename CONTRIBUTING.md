@@ -118,12 +118,18 @@ Squash antes de merge é incentivado pra PRs que fizeram muitas idas e vindas.
 
 ## Segurança
 
-Achou vulnerabilidade?
+Achou vulnerabilidade? **Não abra issue pública.** Use o
+[Security Advisory privado](https://github.com/sirelves/boracall/security/advisories/new).
+Detalhes e escopo no [SECURITY.md](./SECURITY.md).
 
-- **Não** abra issue pública.
-- Mande um e-mail direto com PoC mínima. O endereço está no `package.json` /
-  perfil do repo.
-- Resposta em até 72h. CVE + crédito no changelog.
+Vale para todo mundo, inclusive mantenedor: **detalhe de infraestrutura não entra
+em issue nem em PR.** O repositório é público — endereço de servidor, porta
+aberta, regra de firewall, o que está ou não instalado na máquina, nome de outro
+serviço que roda ao lado. Nada disso. Na issue vai o *que precisa ser feito*; o
+*como está hoje* vai no advisory.
+
+Parece exagero até a primeira vez que alguém varre issues de repositório aberto
+atrás exatamente disso.
 
 ---
 
