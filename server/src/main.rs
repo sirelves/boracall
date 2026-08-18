@@ -96,12 +96,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/channels/{slug}/read", put(handlers::messages::mark_read))
         .route("/messages/{id}", patch(handlers::messages::edit_message))
-        .route("/messages/{id}", delete(handlers::messages::delete_message))
-        // rooms (legado — sai quando o front migrar pro modelo de canais)
-        .route("/rooms", get(handlers::rooms::list_rooms))
-        .route("/rooms", post(handlers::rooms::create_room))
-        .route("/rooms/{slug}", get(handlers::rooms::get_room))
-        .route("/rooms/{slug}/join", post(handlers::rooms::join_room));
+        .route("/messages/{id}", delete(handlers::messages::delete_message));
 
     let ws = Router::new().route("/servers/{slug}", get(signaling::ws_server));
 
