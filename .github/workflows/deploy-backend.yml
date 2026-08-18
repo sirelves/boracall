@@ -69,26 +69,33 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
 
-      - name: Trust VPS host key
+      - name: Confiar na host key do VPS
         env:
+          HOST_KEY: ${{ vars.DEPLOY_HOST_KEY }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          # O ssh-keyscan falha de vez em quando a partir dos runners do GitHub
-          # (o landing.yml já tinha tratamento pra isso, e este workflow nasceu
-          # sem). Uma falha aqui derruba um deploy que estava perfeito, então
-          # tenta algumas vezes antes de desistir.
-          for i in 1 2 3 4 5; do
-            if ssh-keyscan -T 20 -p 22 "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null \
-               && [ -s ~/.ssh/known_hosts ]; then
-              echo "host key obtida na tentativa $i"
-              exit 0
-            fi
-            echo "tentativa $i falhou"
-            sleep 5
-          done
-          echo "::error::ssh-keyscan não conseguiu a host key de $DEPLOY_HOST em 5 tentativas"
-          exit 1
+          # A host key é FIXA, guardada na variável DEPLOY_HOST_KEY, em vez de
+          # buscada por ssh-keyscan a cada execução. Duas razões:
+          #
+          # 1. O ssh-keyscan depende da rede e do servidor responder rápido. O
+          #    VPS é compartilhado com outros serviços; quando um vizinho carrega
+          #    a máquina, o handshake estoura o timeout e derruba um deploy que
+          #    estava perfeito. Já aconteceu três vezes.
+          # 2. Aceitar qualquer chave que aparecer não verifica nada — é o mesmo
+          #    que StrictHostKeyChecking=yes. Com a chave fixa, uma troca
+          #    inesperada faz a conexão FALHAR, que é o comportamento desejado.
+          #
+          # Se o servidor for reinstalado, atualize a variável:
+          #   ssh-keyscan -t ed25519 <host>
+          if [ -z "$HOST_KEY" ]; then
+            echo "::error::variável DEPLOY_HOST_KEY não configurada"
+            exit 1
+          fi
+          echo "$HOST_KEY" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          echo "host key fixada:"
+          ssh-keygen -lf ~/.ssh/known_hosts
 
       - name: Backup do banco
         if: ${{ !inputs.skip_backup }}

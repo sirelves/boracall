@@ -229,36 +229,35 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
 
-      - name: Trust VPS host key
+      - name: Confiar na host key do VPS
         if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
         env:
+          HOST_KEY: ${{ vars.DEPLOY_HOST_KEY }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          for i in 1 2 3 4 5; do
-            if ssh-keyscan -T 20 -p 22 "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null \
-               && [ -s ~/.ssh/known_hosts ]; then
-              echo "host key obtida na tentativa $i"
-              exit 0
-            fi
-            echo "tentativa $i falhou"
-            sleep 5
-          done
-          echo "::error::ssh-keyscan não conseguiu a host key em 5 tentativas"
-          exit 1
+          # A host key é FIXA, guardada na variável DEPLOY_HOST_KEY, em vez de
+          # buscada por ssh-keyscan a cada execução. Duas razões:
+          #
+          # 1. O ssh-keyscan depende da rede e do servidor responder rápido. O
+          #    VPS é compartilhado com outros serviços; quando um vizinho carrega
+          #    a máquina, o handshake estoura o timeout e derruba um deploy que
+          #    estava perfeito. Já aconteceu três vezes.
+          # 2. Aceitar qualquer chave que aparecer não verifica nada — é o mesmo
+          #    que StrictHostKeyChecking=yes. Com a chave fixa, uma troca
+          #    inesperada faz a conexão FALHAR, que é o comportamento desejado.
+          #
+          # Se o servidor for reinstalado, atualize a variável:
+          #   ssh-keyscan -t ed25519 <host>
+          if [ -z "$HOST_KEY" ]; then
+            echo "::error::variável DEPLOY_HOST_KEY não configurada"
+            exit 1
+          fi
+          echo "$HOST_KEY" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          echo "host key fixada:"
+          ssh-keygen -lf ~/.ssh/known_hosts
 
-      # Todo o envio pro VPS acontece aqui, no runner Linux — não mais em cada
-      # job de build.
-      #
-      # Motivo: o runner de Windows não alcança a porta 22 do VPS (cinco
-      # tentativas de ssh-keyscan estourando 20s cada, com o VPS sem fail2ban,
-      # sem regra de iptables e sem nenhuma conexão recusada no log). É restrição
-      # de saída do lado do GitHub, e insistir só queimava um build de 10 minutos
-      # que tinha dado certo.
-      #
-      # De quebra, o release deixa de publicar aos pedaços: antes cada
-      # plataforma subia assim que terminava, então durante alguns minutos o
-      # diretório misturava versão nova e antiga.
       - name: Enviar bundles → VPS
         if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
         env:
@@ -279,10 +278,10 @@ jobs:
           echo "== enviando =="; ls -lah envio/
           for f in envio/*; do
             [ -f "$f" ] || continue
-            scp -o StrictHostKeyChecking=no -o BatchMode=yes "$f" \
+            scp -o StrictHostKeyChecking=yes -o BatchMode=yes "$f" \
               "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/"
           done
-          ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" \
+          ssh -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
             "chown -R www-data:www-data /var/www/boracall/downloads"
 
       # Depois que TUDO subiu: aponta os nomes estáveis que a landing linka
@@ -295,9 +294,9 @@ jobs:
         run: |
           # Escreve num temporário e move: sobrescrever o arquivo em uso dá
           # "Text file busy", e o mv é atômico.
-          scp -o StrictHostKeyChecking=no scripts/update-symlinks.sh \
+          scp -o StrictHostKeyChecking=yes scripts/update-symlinks.sh \
             "$DEPLOY_USER@$DEPLOY_HOST:/tmp/boracall-update-symlinks"
-          ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" \
+          ssh -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
             "chmod 755 /tmp/boracall-update-symlinks \
              && mv -f /tmp/boracall-update-symlinks /usr/local/bin/boracall-update-symlinks \
              && /usr/local/bin/boracall-update-symlinks"
@@ -409,9 +408,9 @@ jobs:
           echo "== latest.json =="
           jq . out/latest.json
 
-          scp -o StrictHostKeyChecking=no out/latest.json \
+          scp -o StrictHostKeyChecking=yes out/latest.json \
             "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/latest.json"
-          ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" \
+          ssh -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
             "chown www-data:www-data /var/www/boracall/downloads/latest.json"
 
       # --- GitHub Release ---
