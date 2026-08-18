@@ -52,8 +52,11 @@ npm install && npm run dev        # app Tauri com hot reload
   com o banco no ar e commite junto:
 
   ```bash
-  cargo sqlx prepare --workspace -- -p boracall-server
+  cargo sqlx prepare --workspace -- -p boracall-server --all-targets
   ```
+
+  O `--all-targets` não é opcional: sem ele o cache ignora as queries que vivem
+  dentro de `#[cfg(test)]`, e aí o `cargo test` offline não compila.
 
   O job `sqlx-cache` do CI roda `cargo sqlx prepare --check` e falha se você esquecer.
 - **Erros novos** entram em `error.rs` com variant tipada, nunca `anyhow::Error`
