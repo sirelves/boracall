@@ -101,6 +101,11 @@ jobs:
 
     env:
       DATABASE_URL: postgres://boracall:boracall@127.0.0.1:5432/boracall
+      # Compila contra o cache em .sqlx/, não contra o banco: as macros do sqlx
+      # validam em tempo de COMPILAÇÃO, e nesse momento o Postgres do service
+      # ainda está vazio — as migrations só rodam no test_state(), em runtime.
+      # Sem isso, todo query! falha com "relation does not exist".
+      SQLX_OFFLINE: 'true'
 
     steps:
       - uses: actions/checkout@v4
@@ -114,8 +119,6 @@ jobs:
           workspaces: '.'
           key: backend-integration
 
-      # As migrations rodam sozinhas no test_state(), mas rodar antes deixa a
-      # falha de schema aparecer aqui em vez de dentro do primeiro teste.
       - name: cargo test -- --ignored
         run: cargo test -p boracall-server --locked -- --ignored
 
