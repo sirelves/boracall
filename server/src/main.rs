@@ -12,6 +12,7 @@ mod error;
 mod handlers;
 mod otp;
 mod signaling;
+mod slug;
 mod state;
 
 use axum::{
@@ -74,7 +75,17 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/reset-password", post(handlers::auth::reset_password))
         .route("/auth/me", get(handlers::auth::me))
         .route("/auth/me", patch(handlers::auth::update_me))
-        // rooms
+        // servers + channels
+        .route("/servers", get(handlers::servers::list_servers))
+        .route("/servers", post(handlers::servers::create_server))
+        .route("/servers/{slug}", get(handlers::servers::get_server))
+        .route("/servers/{slug}/join", post(handlers::servers::join_server))
+        .route(
+            "/servers/{slug}/channels",
+            post(handlers::servers::create_channel),
+        )
+        .route("/channels/{slug}", get(handlers::servers::get_channel))
+        // rooms (legado — sai quando o front migrar pro modelo de canais)
         .route("/rooms", get(handlers::rooms::list_rooms))
         .route("/rooms", post(handlers::rooms::create_room))
         .route("/rooms/{slug}", get(handlers::rooms::get_room))
