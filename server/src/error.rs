@@ -30,6 +30,11 @@ pub enum AppError {
     Jwt(#[from] jsonwebtoken::errors::Error),
     #[error("internal: {0}")]
     Internal(String),
+    /// Limite de requisições. Carrega em quantos segundos vale tentar de novo,
+    /// que vira o header `Retry-After` — sem isso o cliente só sabe que falhou,
+    /// não quando parar de insistir.
+    #[error("muitas tentativas — tente de novo em {retry_after_secs}s")]
+    RateLimited { retry_after_secs: u64 },
 }
 
 impl IntoResponse for AppError {
@@ -46,6 +51,7 @@ impl IntoResponse for AppError {
             }
             AppError::Argon(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
             AppError::Jwt(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            AppError::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
         };
 
         // Log details at the server side; clients see a compact message only.
@@ -64,7 +70,13 @@ impl IntoResponse for AppError {
             other => other.to_string(),
         };
 
-        (status, Json(json!({ "error": code, "message": message }))).into_response()
+        let mut resp = (status, Json(json!({ "error": code, "message": message }))).into_response();
+        if let AppError::RateLimited { retry_after_secs } = &self {
+            if let Ok(v) = retry_after_secs.to_string().parse() {
+                resp.headers_mut().insert("retry-after", v);
+            }
+        }
+        resp
     }
 }
 

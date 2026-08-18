@@ -18,6 +18,12 @@ pub struct Config {
     /// Sem segredo, o endpoint devolve só STUN (modo de desenvolvimento).
     pub turn_secret: Option<String>,
     pub turn_ttl_secs: i64,
+    /// Limite por IP nas rotas de auth: `burst` requisições por `janela`.
+    pub rl_auth_burst: u32,
+    pub rl_auth_janela_secs: u64,
+    /// Limite por e-mail de destino nas rotas que disparam mensagem.
+    pub rl_email_burst: u32,
+    pub rl_email_janela_secs: u64,
     /// Teto de pares simultâneos num único canal de voz.
     /// Acima de ~4 a mesh satura o uplink; é o guarda-corpo até o SFU existir.
     pub max_peers_per_channel: usize,
@@ -97,6 +103,22 @@ impl Config {
             );
         }
 
+        let num = |chave: &str, padrao: u64| -> u64 {
+            std::env::var(chave)
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|n: &u64| *n > 0)
+                .unwrap_or(padrao)
+        };
+        // 10 tentativas por minuto por IP dá folga pra quem erra a senha e
+        // aperta apertado, e ainda assim torna força bruta inviável.
+        let rl_auth_burst = num("BC_RL_AUTH_BURST", 10) as u32;
+        let rl_auth_janela_secs = num("BC_RL_AUTH_JANELA_SECS", 60);
+        // 3 e-mails por hora pro mesmo endereço. Reenviar código duas ou três
+        // vezes é normal; a quarta em uma hora é abuso.
+        let rl_email_burst = num("BC_RL_EMAIL_BURST", 3) as u32;
+        let rl_email_janela_secs = num("BC_RL_EMAIL_JANELA_SECS", 3600);
+
         let max_peers_per_channel: usize = std::env::var("BC_MAX_PEERS_PER_CHANNEL")
             .or_else(|_| std::env::var("BC_MAX_PEERS_PER_ROOM"))
             .ok()
@@ -117,6 +139,10 @@ impl Config {
             turn_urls,
             turn_secret,
             turn_ttl_secs,
+            rl_auth_burst,
+            rl_auth_janela_secs,
+            rl_email_burst,
+            rl_email_janela_secs,
             max_peers_per_channel,
         })
     }

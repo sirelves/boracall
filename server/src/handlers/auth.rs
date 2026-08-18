@@ -12,6 +12,7 @@ use validator::Validate;
 
 use crate::auth::{hash_password, issue_token, verify_password, AuthUser};
 use crate::error::{AppError, AppResult};
+use crate::ratelimit::checar_envio;
 use crate::state::AppState;
 
 // ---------------------------------------------------------------------------
@@ -162,6 +163,11 @@ pub async fn request_otp(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> AppResult<Json<serde_json::Value>> {
+    // Limite por destinatário, além do limite por IP da camada: sem ele, quem
+    // trocar de IP continua conseguindo encher a caixa da vítima e queimar a
+    // cota do Resend.
+    checar_envio(&state, &auth.email)?;
+
     let code = state.otp.issue(&auth.email);
     state
         .mailer
@@ -210,6 +216,11 @@ pub async fn request_password_reset(
 ) -> AppResult<Json<serde_json::Value>> {
     body.validate()?;
     let email = body.email.trim().to_lowercase();
+
+    // Esta rota é aberta e recebe o destinatário no corpo — é a que mais
+    // convida ao abuso. O limite é por e-mail alvo, então trocar de IP não
+    // ajuda quem quer encher a caixa de alguém.
+    checar_envio(&state, &email)?;
 
     let exists = sqlx::query_scalar!(r#"SELECT 1 AS "e!" FROM users WHERE email = $1"#, email)
         .fetch_optional(&state.db)
