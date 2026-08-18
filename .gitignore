@@ -38,3 +38,6 @@ server/boracall.db*
 
 # dev-local backup (criado por scripts/dev-local.sh)
 dist/env.js.devbak
+
+# artefatos do playwright-mcp (screenshots de verificação)
+.playwright-mcp/

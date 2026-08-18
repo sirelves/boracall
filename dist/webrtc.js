@@ -56,21 +56,33 @@
     constructor(realtime, selfId, opts = {}) {
       this.rt        = realtime;
       this.selfId    = selfId;
+      // A mesh vive dentro de UM canal de voz. A conexão é do servidor inteiro,
+      // então todo evento de voz precisa ser filtrado por canal antes de virar
+      // peer connection — senão a call de um canal tenta negociar com outro.
+      this.channelId = opts.channelId || null;
       this.ice       = opts.iceServers || DEFAULT_ICE;
       this.localStream = null;
       this.peers     = new Map();   // userId -> { pc, stream?, displayName?, muted, el? }
       this.handlers  = new Map();
       this._detachLocalLevel = null;
 
-      // Wire realtime events
-      this.rt.on("presence", (m) => this._onPresence(m));
-      this.rt.on("joined",   (m) => this._onJoined(m));
-      this.rt.on("left",     (m) => this._onLeft(m));
-      this.rt.on("offer",    (m) => this._onOffer(m));
-      this.rt.on("answer",   (m) => this._onAnswer(m));
-      this.rt.on("ice",      (m) => this._onIce(m));
-      this.rt.on("mute",     (m) => this._onMute(m));
-      this.rt.on("speaking", (m) => this._onSpeaking(m));
+      // Eventos do realtime. Os `_off` guardam as inscrições pra soltar em
+      // stop() — sem isso, trocar de canal deixaria a mesh velha escutando.
+      this._off = [
+        this.rt.on("voice_presence", (m) => { if (this._mine(m)) this._onPresence(m); }),
+        this.rt.on("voice_joined",   (m) => { if (this._mine(m)) this._onJoined(m); }),
+        this.rt.on("voice_left",     (m) => { if (this._mine(m)) this._onLeft(m); }),
+        this.rt.on("offer",          (m) => this._onOffer(m)),
+        this.rt.on("answer",         (m) => this._onAnswer(m)),
+        this.rt.on("ice",            (m) => this._onIce(m)),
+        this.rt.on("mute",           (m) => { if (this._mine(m)) this._onMute(m); }),
+        this.rt.on("speaking",       (m) => { if (this._mine(m)) this._onSpeaking(m); }),
+      ];
+    }
+
+    /// O evento é do canal desta mesh? Sem channelId definido, aceita tudo.
+    _mine(m) {
+      return !this.channelId || m.channel_id === this.channelId;
     }
     on(t, fn) { if (!this.handlers.has(t)) this.handlers.set(t, new Set()); this.handlers.get(t).add(fn); return () => this.off(t, fn); }
     off(t, fn) { const s = this.handlers.get(t); if (s) s.delete(fn); }
@@ -85,6 +97,8 @@
       return this.localStream;
     }
     stop() {
+      for (const off of this._off || []) { try { off(); } catch {} }
+      this._off = [];
       if (this._detachLocalLevel) this._detachLocalLevel();
       this._detachLocalLevel = null;
       for (const [, p] of this.peers) {
@@ -153,9 +167,18 @@
     }
 
     async _onPresence(m) {
-      // Initial snapshot — initiate offer to every peer with a lower-id tiebreaker,
-      // so only one side creates the offer per pair (deterministic glare avoidance).
-      for (const peer of m.peers || []) {
+      const peers = m.peers || [];
+      const presentes = new Set(peers.map((p) => p.user_id));
+
+      // A presença é a lista COMPLETA do canal. Quem não está mais nela sai da
+      // mesh — cobre o caso do voice_left que se perdeu numa reconexão.
+      for (const id of [...this.peers.keys()]) {
+        if (!presentes.has(id)) this._cleanupPeer(id);
+      }
+
+      // Desempate por id: só o lado de id menor cria a offer, então cada par
+      // negocia uma vez só (glare avoidance determinístico).
+      for (const peer of peers) {
         if (peer.user_id === this.selfId) continue;
         this._ensurePeer(peer.user_id, peer.display_name);
         if (String(this.selfId) < String(peer.user_id)) {
