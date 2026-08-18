@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
 
     let pool = db::connect(&cfg.database_url).await?;
     let hub = Arc::new(Hub::new());
-    let otp = otp::OtpStore::new();
+    let otp = otp::OtpStore::new(pool.clone());
     let mailer = email::Mailer::new(cfg.resend_api_key.clone(), cfg.email_from.clone());
 
     // Limites. Os números vêm do config pra dar pra afrouxar em produção sem
@@ -58,6 +58,23 @@ async fn main() -> anyhow::Result<()> {
         cfg.rl_email_burst,
         Duration::from_secs(cfg.rl_email_janela_secs),
     ));
+
+    // Códigos vencidos saem da tabela periodicamente. O expires_at já barra o
+    // uso; isso é pra tabela não crescer sem parar.
+    {
+        let otp = otp.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(3600));
+            loop {
+                tick.tick().await;
+                match otp.limpar_vencidos().await {
+                    Ok(n) if n > 0 => tracing::info!(removidos = n, "otp vencidos limpos"),
+                    Err(e) => tracing::warn!(error = %e, "falha limpando otp vencidos"),
+                    _ => {}
+                }
+            }
+        });
+    }
 
     // Sem isso o mapa de baldes guarda uma entrada por IP que já passou por
     // aqui, pra sempre.

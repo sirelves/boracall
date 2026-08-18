@@ -557,11 +557,11 @@ pub(crate) mod tests {
             .await
             .expect("migrations");
         AppState {
+            otp: OtpStore::new(db.clone()),
             db,
             hub: Arc::new(Hub::new()),
             jwt_secret: Arc::new("test-secret-com-pelo-menos-24-chars".into()),
             jwt_ttl_days: 30,
-            otp: OtpStore::new(),
             mailer: Mailer::new(None, None),
             stun_urls: vec!["stun:stun.l.google.com:19302".into()],
             turn_urls: Vec::new(),

@@ -123,14 +123,15 @@ mod tests {
     /// `connect_lazy` devolve um pool sem abrir conexão — nenhum Postgres é
     /// necessário, e qualquer query acidental falharia em vez de passar batido.
     fn test_state(secret: &str, ttl_days: i64) -> AppState {
+        let db = PgPoolOptions::new()
+            .connect_lazy("postgres://invalid:invalid@127.0.0.1:1/none")
+            .expect("lazy pool");
         AppState {
-            db: PgPoolOptions::new()
-                .connect_lazy("postgres://invalid:invalid@127.0.0.1:1/none")
-                .expect("lazy pool"),
+            otp: OtpStore::new(db.clone()),
+            db,
             hub: Arc::new(Hub::new()),
             jwt_secret: Arc::new(secret.to_string()),
             jwt_ttl_days: ttl_days,
-            otp: OtpStore::new(),
             mailer: Mailer::new(None, None),
             stun_urls: vec!["stun:stun.l.google.com:19302".into()],
             turn_urls: Vec::new(),
