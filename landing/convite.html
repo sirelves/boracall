@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Convite — BoraCall</title>
+<meta name="robots" content="noindex" />
+<link rel="stylesheet" href="/styles.css" />
+<style>
+  .cv { max-width: 520px; margin: 0 auto; padding: 64px 20px; text-align: center; }
+  .cv h1 { font-size: 26px; margin: 0 0 8px; }
+  .cv .sub { color: var(--fg-dim, #9a9a9a); margin-bottom: 28px; }
+  .cv .slug {
+    font-family: var(--mono, monospace); font-size: 18px; letter-spacing: 2px;
+    background: #0e0f13; border: 1px solid #333; padding: 14px; margin-bottom: 10px;
+    word-break: break-all;
+  }
+  .cv button, .cv a.btn {
+    display: inline-block; padding: 12px 18px; border: 1px solid #444;
+    background: #1a1c22; color: #eee; cursor: pointer; text-decoration: none;
+    font-size: 14px; margin: 4px;
+  }
+  .cv a.btn-amb { background: #f5b947; color: #14151a; border-color: #f5b947; }
+  .cv ol { text-align: left; color: var(--fg-dim, #9a9a9a); line-height: 1.9; margin-top: 28px; }
+</style>
+</head>
+<body>
+  <div class="cv">
+    <h1>Te chamaram pra um canal</h1>
+    <p class="sub">Os canais do BoraCall vivem dentro do app.</p>
+
+    <div class="slug" id="link">—</div>
+    <button id="copiar">copiar link</button>
+
+    <ol>
+      <li>Abra o BoraCall (<a href="/#download">baixe aqui</a> se ainda não tem)</li>
+      <li>Clique em <b>↳</b> na barra lateral, ou em <b>Entrar por link</b></li>
+      <li>Cole o link e pronto — você entra no servidor e cai direto no canal</li>
+    </ol>
+
+    <p style="margin-top:28px">
+      <a class="btn btn-amb" href="/#download">Baixar o BoraCall</a>
+      <a class="btn" href="/">Ver o que é</a>
+    </p>
+  </div>
+
+<script>
+  // O slug vem do caminho: /c/<slug>. A página é servida pra qualquer /c/*,
+  // então quem monta o texto é o JS.
+  var slug = (location.pathname.match(/\/c\/([a-z0-9]+)/i) || [])[1] || "";
+  var link = location.origin + "/c/" + slug;
+  document.getElementById("link").textContent = slug ? link : "link inválido";
+
+  document.getElementById("copiar").addEventListener("click", function () {
+    var b = this;
+    navigator.clipboard.writeText(link).then(function () {
+      b.textContent = "copiado!";
+      setTimeout(function () { b.textContent = "copiar link"; }, 1600);
+    });
+  });
+</script>
+</body>
+</html>
