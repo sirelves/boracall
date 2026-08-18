@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO otp_codes (purpose, email, code_hash, expires_at, attempts)\n            VALUES ($1, $2, $3, NOW() + make_interval(mins => $4::int), 0)\n            ON CONFLICT (purpose, email) DO UPDATE\n                SET code_hash  = EXCLUDED.code_hash,\n                    expires_at = EXCLUDED.expires_at,\n                    attempts   = 0,\n                    created_at = NOW()\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        {
+          "Custom": {
+            "name": "citext",
+            "kind": "Simple"
+          }
+        },
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "89da9be6066b4405b1f9376c726a7b2718b6c23be1f8d5934cfb2bb9097d61a6"
+}

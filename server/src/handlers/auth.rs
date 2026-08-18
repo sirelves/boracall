@@ -12,6 +12,7 @@ use validator::Validate;
 
 use crate::auth::{hash_password, issue_token, verify_password, AuthUser};
 use crate::error::{AppError, AppResult};
+use crate::otp::VerifyErro;
 use crate::ratelimit::checar_envio;
 use crate::state::AppState;
 
@@ -168,7 +169,7 @@ pub async fn request_otp(
     // cota do Resend.
     checar_envio(&state, &auth.email)?;
 
-    let code = state.otp.issue(&auth.email);
+    let code = state.otp.issue(&auth.email).await?;
     state
         .mailer
         .send_otp(&auth.email, &code)
@@ -186,8 +187,16 @@ pub async fn verify_otp(
 ) -> AppResult<Json<MeResp>> {
     body.validate()?;
 
-    if !state.otp.verify(&auth.email, &body.code) {
-        return Err(AppError::Unauthorized("código inválido ou expirado".into()));
+    match state.otp.verify(&auth.email, &body.code).await? {
+        Ok(()) => {}
+        Err(VerifyErro::Bloqueado) => {
+            return Err(AppError::Unauthorized(
+                "tentativas demais — peça um código novo".into(),
+            ))
+        }
+        Err(VerifyErro::Invalido) => {
+            return Err(AppError::Unauthorized("código inválido ou expirado".into()))
+        }
     }
 
     let row = sqlx::query!(
@@ -228,7 +237,7 @@ pub async fn request_password_reset(
         .is_some();
 
     if exists {
-        let code = state.otp.issue_reset(&email);
+        let code = state.otp.issue_reset(&email).await?;
         if let Err(e) = state.mailer.send_password_reset(&email, &code).await {
             tracing::error!(%email, error = %e, "failed to send password reset email");
         }
@@ -247,8 +256,16 @@ pub async fn reset_password(
     body.validate()?;
     let email = body.email.trim().to_lowercase();
 
-    if !state.otp.verify_reset(&email, &body.code) {
-        return Err(AppError::Unauthorized("código inválido ou expirado".into()));
+    match state.otp.verify_reset(&email, &body.code).await? {
+        Ok(()) => {}
+        Err(VerifyErro::Bloqueado) => {
+            return Err(AppError::Unauthorized(
+                "tentativas demais — peça um código novo".into(),
+            ))
+        }
+        Err(VerifyErro::Invalido) => {
+            return Err(AppError::Unauthorized("código inválido ou expirado".into()))
+        }
     }
 
     let hash = hash_password(&body.new_password)?;

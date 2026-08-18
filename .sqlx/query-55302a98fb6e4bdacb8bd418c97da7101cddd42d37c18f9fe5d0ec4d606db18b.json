@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE otp_codes SET expires_at = NOW() - interval '1 minute' WHERE email = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "citext",
+            "kind": "Simple"
+          }
+        }
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "55302a98fb6e4bdacb8bd418c97da7101cddd42d37c18f9fe5d0ec4d606db18b"
+}
