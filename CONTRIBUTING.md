@@ -100,3 +100,39 @@ Achou vulnerabilidade?
 ## Licença
 
 Ao contribuir, você concorda que seu código será publicado sob [MIT](./LICENSE).
+
+---
+
+## Verificação de voz
+
+Dois scripts, sem dependência de framework de teste, que cobrem o que teste de
+unidade não alcança:
+
+```bash
+# 1) signaling: dois sockets reais trocando offer/answer/ICE
+cargo run -p boracall-server           # num terminal
+node scripts/smoke-ws.mjs              # noutro
+
+# 2) áudio: dois navegadores com microfone sintético, RTP de verdade
+(cd dist && python3 -m http.server 5174)
+npm i playwright && npx playwright install chromium
+node scripts/smoke-audio.mjs
+
+# 3) o mesmo, forçando todo o tráfego pelo TURN
+RELAY_ONLY=1 node scripts/smoke-audio.mjs
+```
+
+O terceiro é o único jeito de provar que o relay funciona sem estar atrás de uma
+NAT simétrica de verdade: `iceTransportPolicy: "relay"` descarta candidato
+direto, então se o áudio passa, passou pelo coturn. Ele confere o tipo do
+candidato vencedor (`relay`) além dos bytes.
+
+Ambos rodam contra outro host via `API=https://api.boracall.com node scripts/...`.
+
+## coturn
+
+O TURN usa credencial efêmera (`use-auth-secret`): o backend assina
+`<validade>:<user-id>` com HMAC-SHA1 usando o mesmo `static-auth-secret` do
+`/etc/turnserver.conf`, e entrega em `GET /api/ice`. Não existe usuário fixo pra
+vazar dentro do bundle do app, e rotacionar o segredo invalida tudo que já foi
+entregue — sem publicar versão nova do desktop.

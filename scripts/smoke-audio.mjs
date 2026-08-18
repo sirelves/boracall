@@ -20,7 +20,13 @@ import { chromium } from "playwright";
 
 const API = process.env.API || "http://127.0.0.1:3030";
 const APP = process.env.APP || "http://127.0.0.1:5174/index.html";
-const ESPERA_MS = Number(process.env.ESPERA_MS || 8000);
+// Relay demora mais pra conectar que o caminho direto: cada lado precisa
+// alocar no TURN, criar permissão e fazer channel bind antes de qualquer mídia.
+const ESPERA_MS = Number(process.env.ESPERA_MS || (process.env.RELAY_ONLY === "1" ? 20000 : 8000));
+// RELAY_ONLY=1 força todo o tráfego pelo TURN (iceTransportPolicy: "relay").
+// É o único jeito de provar que o relay funciona sem estar atrás de NAT
+// simétrica de verdade: se o áudio passa assim, passou pelo coturn.
+const RELAY_ONLY = process.env.RELAY_ONLY === "1";
 
 let falhas = 0;
 const ok = (cond, msg) => {
@@ -54,9 +60,12 @@ async function entrarNaCall(page, { token, user, serverSlug, channelId }) {
   await page.goto(APP);
   await page.waitForFunction(() => window.Realtime && window.WebRTCMesh && window.api);
 
-  return page.evaluate(async ([slug, chId, selfId]) => {
+  return page.evaluate(async ([slug, chId, selfId, relayOnly]) => {
     const rt = new window.Realtime(slug);
-    const mesh = new window.WebRTCMesh.Mesh(rt, selfId, { channelId: chId });
+    const mesh = new window.WebRTCMesh.Mesh(rt, selfId, {
+      channelId: chId,
+      ...(relayOnly ? { iceTransportPolicy: "relay" } : {}),
+    });
     // Guardados pra que a fase de medição consiga alcançá-los.
     window.__rt = rt;
     window.__mesh = mesh;
@@ -68,7 +77,7 @@ async function entrarNaCall(page, { token, user, serverSlug, channelId }) {
     await mesh.start();          // acquireMic() pega o dispositivo falso do Chrome
     rt.joinVoice(chId);
     return { pares: mesh.peers.size };
-  }, [serverSlug, channelId, user.id]);
+  }, [serverSlug, channelId, user.id, RELAY_ONLY]);
 }
 
 /// Lê as estatísticas de RTP de cada peer connection da mesh.
@@ -86,11 +95,19 @@ async function medir(page) {
           saida = { bytes: r.bytesSent || 0, pacotes: r.packetsSent || 0 };
         }
         if (r.type === "candidate-pair" && r.state === "succeeded") {
-          parIce = { rtt: r.currentRoundTripTime ?? null };
+          parIce = { rtt: r.currentRoundTripTime ?? null, localId: r.localCandidateId };
         }
       });
+      // Tipo do candidato local vencedor: "relay" prova que passou pelo TURN.
+      let tipoLocal = null;
+      if (parIce?.localId) {
+        const c = stats.get(parIce.localId);
+        if (c) tipoLocal = c.candidateType;
+      }
+
       out.push({
         userId,
+        tipoLocal,
         connectionState: p.pc.connectionState,
         iceConnectionState: p.pc.iceConnectionState,
         temStreamRemota: !!p.stream,
@@ -116,7 +133,7 @@ async function main() {
   const canalVoz = srv.channels.find((c) => c.kind === "voice");
   ok(!!canalVoz, "servidor com canal de voz criado");
 
-  console.log("→ abrindo dois navegadores com microfone sintético");
+  console.log(`→ abrindo dois navegadores com microfone sintético${RELAY_ONLY ? " (ICE só por relay)" : ""}`);
   const browser = await chromium.launch({
     args: [
       "--use-fake-device-for-media-stream",   // microfone sintético (tom contínuo)
@@ -155,7 +172,10 @@ async function main() {
       ok(s.temStreamRemota, `${nome}: recebeu a stream remota`);
       ok((s.saida?.pacotes || 0) > 0, `${nome}: enviou áudio (${s.saida?.pacotes || 0} pacotes, ${s.saida?.bytes || 0} bytes)`);
       ok((s.entrada?.pacotes || 0) > 0, `${nome}: RECEBEU áudio (${s.entrada?.pacotes || 0} pacotes, ${s.entrada?.bytes || 0} bytes)`);
-      if (s.parIce?.rtt != null) console.log(`       rtt ${Math.round(s.parIce.rtt * 1000)}ms`);
+      console.log(`       candidato local: ${s.tipoLocal ?? "?"}${s.parIce?.rtt != null ? ` · rtt ${Math.round(s.parIce.rtt * 1000)}ms` : ""}`);
+      if (RELAY_ONLY) {
+        ok(s.tipoLocal === "relay", `${nome}: caminho é relay (TURN), não direto`);
+      }
     }
   } finally {
     await browser.close();

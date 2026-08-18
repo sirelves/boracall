@@ -12,10 +12,11 @@
 // Topology = mesh. Fine up to ~4 simultaneous talkers. Beyond that we want an SFU.
 
 (function () {
+  // Só STUN. É o fallback de quando não dá pra falar com o backend — quem manda
+  // é o GET /api/ice, que devolve TURN com credencial efêmera. Sem TURN, quem
+  // está atrás de NAT simétrica não conecta.
   const DEFAULT_ICE = [
     { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
-    // TURN servers go here in prod (coturn behind the VPS) — without them,
-    // ~30% of peers on symmetric NATs won't connect. See HANDOFF.
   ];
 
   async function acquireMic({ echoCancellation = true, noiseSuppression = true, autoGainControl = true } = {}) {
@@ -60,6 +61,9 @@
       // então todo evento de voz precisa ser filtrado por canal antes de virar
       // peer connection — senão a call de um canal tenta negociar com outro.
       this.channelId = opts.channelId || null;
+      // "relay" força todo o tráfego pelo TURN. Serve pra verificar que o relay
+      // funciona de verdade e pra quem não quer expor o IP local aos pares.
+      this.iceTransportPolicy = opts.iceTransportPolicy || "all";
       this.ice       = opts.iceServers || DEFAULT_ICE;
       this.localStream = null;
       this.peers     = new Map();   // userId -> { pc, stream?, displayName?, muted, el? }
@@ -88,7 +92,20 @@
     off(t, fn) { const s = this.handlers.get(t); if (s) s.delete(fn); }
     _emit(t, p) { const s = this.handlers.get(t); if (s) for (const fn of s) { try { fn(p); } catch (e) { console.error(e); } } }
 
-    async start({ stream } = {}) {
+    async start({ stream, iceServers } = {}) {
+      // Busca os servidores ICE antes de qualquer peer connection: trocar a
+      // configuração depois exigiria renegociar tudo.
+      if (iceServers) {
+        this.ice = iceServers;
+      } else if (!this._iceCarregado && window.api && window.api.iceServers) {
+        try {
+          const s = await window.api.iceServers();
+          if (s && s.length) this.ice = s;
+        } catch (e) {
+          console.warn("ice: usando só STUN —", e.message || e);
+        }
+        this._iceCarregado = true;
+      }
       this.localStream = stream || await acquireMic();
       this._detachLocalLevel = attachLevelMeter(this.localStream, (lvl) => {
         this._emit("local-level", lvl);
@@ -120,7 +137,10 @@
 
     _ensurePeer(userId, displayName) {
       if (this.peers.has(userId)) return this.peers.get(userId);
-      const pc = new RTCPeerConnection({ iceServers: this.ice });
+      const pc = new RTCPeerConnection({
+        iceServers: this.ice,
+        iceTransportPolicy: this.iceTransportPolicy,
+      });
       const peer = { pc, stream: null, displayName: displayName || null, muted: false };
       this.peers.set(userId, peer);
 

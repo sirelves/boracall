@@ -12,6 +12,12 @@ pub struct Config {
     pub log: String,
     pub resend_api_key: Option<String>,
     pub email_from: Option<String>,
+    /// STUN e TURN entregues ao cliente em GET /api/ice.
+    pub stun_urls: Vec<String>,
+    pub turn_urls: Vec<String>,
+    /// Sem segredo, o endpoint devolve só STUN (modo de desenvolvimento).
+    pub turn_secret: Option<String>,
+    pub turn_ttl_secs: i64,
     /// Teto de pares simultâneos num único canal de voz.
     /// Acima de ~4 a mesh satura o uplink; é o guarda-corpo até o SFU existir.
     pub max_peers_per_channel: usize,
@@ -57,6 +63,40 @@ impl Config {
         // BC_MAX_PEERS_PER_ROOM segue aceito: é o nome que está nos systemd
         // units em produção hoje, e trocar o env junto com o deploy seria um
         // jeito silencioso de voltar pro default.
+        // Lista separada por vírgula. O default de STUN é o do Google, que
+        // resolve NAT cone; TURN só existe se for configurado.
+        let lista = |chave: &str, padrao: &str| -> Vec<String> {
+            std::env::var(chave)
+                .unwrap_or_else(|_| padrao.to_string())
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        };
+        let stun_urls = lista(
+            "BC_STUN_URLS",
+            "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302",
+        );
+        let turn_urls = lista("BC_TURN_URLS", "");
+        let turn_secret = std::env::var("BC_TURN_SECRET")
+            .ok()
+            .filter(|s| !s.is_empty());
+        let turn_ttl_secs: i64 = std::env::var("BC_TURN_TTL_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|n: &i64| *n >= 60)
+            .unwrap_or(3600);
+
+        if turn_secret.is_some() != !turn_urls.is_empty() {
+            // Um sem o outro é sempre engano de configuração, e o sintoma
+            // apareceria só como chamada que não conecta pra alguns usuários.
+            tracing::warn!(
+                tem_segredo = turn_secret.is_some(),
+                tem_urls = !turn_urls.is_empty(),
+                "BC_TURN_SECRET e BC_TURN_URLS precisam ser definidos juntos — TURN desligado"
+            );
+        }
+
         let max_peers_per_channel: usize = std::env::var("BC_MAX_PEERS_PER_CHANNEL")
             .or_else(|_| std::env::var("BC_MAX_PEERS_PER_ROOM"))
             .ok()
@@ -73,6 +113,10 @@ impl Config {
             log,
             resend_api_key,
             email_from,
+            stun_urls,
+            turn_urls,
+            turn_secret,
+            turn_ttl_secs,
             max_peers_per_channel,
         })
     }
