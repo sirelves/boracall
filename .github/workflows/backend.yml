@@ -75,6 +75,51 @@ jobs:
         run: cargo test -p boracall-server --locked
 
   # ---------------------------------------------------------------------------
+  # Testes que precisam de Postgres de verdade (autorização de servidor/canal,
+  # transações, constraints). São `#[ignore]` por padrão pra que `cargo test`
+  # sem banco continue verde no job `check` e na máquina de quem contribui.
+  # ---------------------------------------------------------------------------
+  integration:
+    name: testes de integração (postgres)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: boracall
+          POSTGRES_USER: boracall
+          POSTGRES_PASSWORD: boracall
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U boracall -d boracall"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+
+    env:
+      DATABASE_URL: postgres://boracall:boracall@127.0.0.1:5432/boracall
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: '.'
+          key: backend-integration
+
+      # As migrations rodam sozinhas no test_state(), mas rodar antes deixa a
+      # falha de schema aparecer aqui em vez de dentro do primeiro teste.
+      - name: cargo test -- --ignored
+        run: cargo test -p boracall-server --locked -- --ignored
+
+  # ---------------------------------------------------------------------------
   # Verifica que `.sqlx/` está em dia com as queries do código.
   #
   # Sem isso, alguém altera uma query, esquece de rodar `cargo sqlx prepare`, e o
@@ -128,8 +173,12 @@ jobs:
 
       - name: cargo sqlx prepare --check
         run: |
-          if ! cargo sqlx prepare --check --workspace -- -p boracall-server; then
+          # --all-targets é obrigatório: sem ele o cache ignora as queries que
+          # vivem dentro de #[cfg(test)], e o `cargo test` do job `check` (que
+          # roda offline) não compila.
+          if ! cargo sqlx prepare --check --workspace -- -p boracall-server --all-targets; then
             echo "::error::O cache em .sqlx/ está desatualizado em relação às queries do código."
-            echo "::error::Rode localmente com o Postgres no ar: cargo sqlx prepare --workspace -- -p boracall-server"
+            echo "::error::Rode localmente com o Postgres no ar:"
+            echo "::error::  cargo sqlx prepare --workspace -- -p boracall-server --all-targets"
             exit 1
           fi
