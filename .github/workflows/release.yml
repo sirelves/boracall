@@ -220,7 +220,9 @@ jobs:
             echo "uploading: $f"
             scp -o StrictHostKeyChecking=no -o BatchMode=yes "$f" "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/"
           done
-          scp -o StrictHostKeyChecking=no scripts/update-symlinks.sh \
+          # Caminho absoluto: este passo já fez "cd dist-release" acima, então
+          # o relativo não resolve mais.
+          scp -o StrictHostKeyChecking=no "$GITHUB_WORKSPACE/scripts/update-symlinks.sh" \
             "$DEPLOY_USER@$DEPLOY_HOST:/usr/local/bin/boracall-update-symlinks"
           ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" "
             chmod 755 /usr/local/bin/boracall-update-symlinks
@@ -285,7 +287,9 @@ jobs:
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          VERSION: ${{ github.ref_name || format('v{0}', github.event.inputs.version) }}
+          # inputs.version primeiro: em workflow_dispatch o ref_name vale
+          # "main", e a versão publicada sairia como "main".
+          VERSION: ${{ github.event.inputs.version && format('v{0}', github.event.inputs.version) || github.ref_name }}
         run: |
           set -e
           VER="${VERSION#v}"
@@ -377,8 +381,8 @@ jobs:
       - name: Criar/atualizar GitHub Release (draft)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name || format('v{0}', github.event.inputs.version) }}
-          name: BoraCall ${{ github.ref_name || github.event.inputs.version }}
+          tag_name: ${{ github.event.inputs.version && format('v{0}', github.event.inputs.version) || github.ref_name }}
+          name: BoraCall ${{ github.event.inputs.version || github.ref_name }}
           draft: true
           prerelease: false
           body: |
