@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT m.user_id, s.owner_id\n        FROM messages m\n        JOIN channels c ON c.id = m.channel_id\n        JOIN servers s ON s.id = c.server_id\n        WHERE m.id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "owner_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "94cbecef7bd699962f5b7fa777a361230dca5b435d4af592f63cd11907b684f8"
+}
