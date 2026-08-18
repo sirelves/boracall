@@ -12,9 +12,9 @@ pub struct Config {
     pub log: String,
     pub resend_api_key: Option<String>,
     pub email_from: Option<String>,
-    /// Hard cap for concurrent peers in a single room.
-    /// Above ~5 the mesh topology saturates; this is the safety net before SFU lands.
-    pub max_peers_per_room: usize,
+    /// Teto de pares simultâneos num único canal de voz.
+    /// Acima de ~4 a mesh satura o uplink; é o guarda-corpo até o SFU existir.
+    pub max_peers_per_channel: usize,
 }
 
 impl Config {
@@ -54,7 +54,11 @@ impl Config {
             .ok()
             .filter(|s| !s.is_empty());
 
-        let max_peers_per_room: usize = std::env::var("BC_MAX_PEERS_PER_ROOM")
+        // BC_MAX_PEERS_PER_ROOM segue aceito: é o nome que está nos systemd
+        // units em produção hoje, e trocar o env junto com o deploy seria um
+        // jeito silencioso de voltar pro default.
+        let max_peers_per_channel: usize = std::env::var("BC_MAX_PEERS_PER_CHANNEL")
+            .or_else(|_| std::env::var("BC_MAX_PEERS_PER_ROOM"))
             .ok()
             .and_then(|v| v.parse().ok())
             .filter(|n: &usize| *n >= 2)
@@ -69,7 +73,7 @@ impl Config {
             log,
             resend_api_key,
             email_from,
-            max_peers_per_room,
+            max_peers_per_channel,
         })
     }
 }

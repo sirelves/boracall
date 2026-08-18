@@ -19,6 +19,7 @@ use validator::Validate;
 
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
+use crate::signaling::ServerMsg;
 use crate::state::AppState;
 
 const MAX_BODY: usize = 4000;
@@ -86,6 +87,8 @@ pub struct ReadStateDto {
 struct ChannelCtx {
     id: Uuid,
     kind: String,
+    /// Chave do hub — quem persiste precisa saber onde publicar o aviso.
+    server_slug: String,
 }
 
 /// Resolve o canal pelo slug e exige que quem pediu seja membro do servidor dono.
@@ -95,7 +98,7 @@ struct ChannelCtx {
 async fn channel_for_member(state: &AppState, slug: &str, user_id: Uuid) -> AppResult<ChannelCtx> {
     let row = sqlx::query!(
         r#"
-        SELECT c.id, c.kind, (m.user_id IS NOT NULL) AS "is_member!"
+        SELECT c.id, c.kind, s.slug AS server_slug, (m.user_id IS NOT NULL) AS "is_member!"
         FROM channels c
         JOIN servers s ON s.id = c.server_id
         LEFT JOIN server_members m ON m.server_id = s.id AND m.user_id = $2
@@ -114,6 +117,7 @@ async fn channel_for_member(state: &AppState, slug: &str, user_id: Uuid) -> AppR
     Ok(ChannelCtx {
         id: row.id,
         kind: row.kind,
+        server_slug: row.server_slug,
     })
 }
 
@@ -125,6 +129,33 @@ fn require_text(ch: &ChannelCtx) -> AppResult<()> {
         ));
     }
     Ok(())
+}
+
+/// Publica o evento no hub do servidor. Best-effort de propósito: a mensagem já
+/// está persistida e a resposta HTTP já é o recibo do usuário. Se o aviso em
+/// tempo real falhar, quem estiver com o canal aberto vê no próximo carregamento
+/// — o que não pode acontecer é a escrita falhar por causa do broadcast.
+fn publish(
+    state: &AppState,
+    server_slug: &str,
+    origin: Uuid,
+    make: impl FnOnce(serde_json::Value) -> ServerMsg,
+    dto: &MessageDto,
+) {
+    match serde_json::to_value(dto) {
+        Ok(v) => state.hub.publish(server_slug, origin, make(v)),
+        Err(e) => tracing::warn!(error = %e, "falha serializando mensagem pro websocket"),
+    }
+}
+
+/// Slug do servidor dono do canal — quem edita ou apaga só tem o id da mensagem.
+async fn server_slug_of_channel(state: &AppState, channel_id: Uuid) -> AppResult<Option<String>> {
+    Ok(sqlx::query_scalar!(
+        "SELECT s.slug FROM channels c JOIN servers s ON s.id = c.server_id WHERE c.id = $1",
+        channel_id
+    )
+    .fetch_optional(&state.db)
+    .await?)
 }
 
 // ---------------------------------------------------------------------------
@@ -261,7 +292,7 @@ pub async fn send_message(
     .fetch_one(&state.db)
     .await?;
 
-    Ok(Json(MessageDto {
+    let dto = MessageDto {
         id: row.id,
         channel_id: row.channel_id,
         user_id: row.user_id,
@@ -269,7 +300,23 @@ pub async fn send_message(
         body: row.body,
         created_at: row.created_at,
         edited_at: row.edited_at,
-    }))
+    };
+
+    // A escrita é HTTP; o aviso em tempo real é WebSocket. Publicar depois do
+    // commit garante que quem receber o evento e for buscar o histórico já
+    // encontra a mensagem lá.
+    publish(
+        &state,
+        &ch.server_slug,
+        auth.id,
+        |m| ServerMsg::Message {
+            channel_id: ch.id,
+            message: m,
+        },
+        &dto,
+    );
+
+    Ok(Json(dto))
 }
 
 /// Edita mensagem. Só o autor.
@@ -312,7 +359,7 @@ pub async fn edit_message(
     .fetch_one(&state.db)
     .await?;
 
-    Ok(Json(MessageDto {
+    let dto = MessageDto {
         id: row.id,
         channel_id: row.channel_id,
         user_id: row.user_id,
@@ -320,7 +367,22 @@ pub async fn edit_message(
         body: row.body,
         created_at: row.created_at,
         edited_at: row.edited_at,
-    }))
+    };
+
+    if let Some(slug) = server_slug_of_channel(&state, dto.channel_id).await? {
+        publish(
+            &state,
+            &slug,
+            auth.id,
+            |m| ServerMsg::MessageUpdated {
+                channel_id: dto.channel_id,
+                message: m,
+            },
+            &dto,
+        );
+    }
+
+    Ok(Json(dto))
 }
 
 /// Apaga mensagem. Autor ou dono do servidor (moderação).
@@ -331,7 +393,7 @@ pub async fn delete_message(
 ) -> AppResult<Json<serde_json::Value>> {
     let row = sqlx::query!(
         r#"
-        SELECT m.user_id, s.owner_id
+        SELECT m.user_id, m.channel_id, s.owner_id, s.slug AS server_slug
         FROM messages m
         JOIN channels c ON c.id = m.channel_id
         JOIN servers s ON s.id = c.server_id
@@ -352,6 +414,15 @@ pub async fn delete_message(
     sqlx::query!("DELETE FROM messages WHERE id = $1", id)
         .execute(&state.db)
         .await?;
+
+    state.hub.publish(
+        &row.server_slug,
+        auth.id,
+        ServerMsg::MessageDeleted {
+            channel_id: row.channel_id,
+            message_id: id,
+        },
+    );
 
     Ok(Json(serde_json::json!({ "deleted": true })))
 }

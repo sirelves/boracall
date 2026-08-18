@@ -18,6 +18,6 @@ pub async fn version() -> Json<Value> {
 
 pub async fn stats(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
-        "active_rooms": state.hub.active_rooms(),
+        "active_servers": state.hub.active_servers(),
     }))
 }

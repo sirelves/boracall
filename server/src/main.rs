@@ -54,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
         jwt_ttl_days: cfg.jwt_ttl_days,
         otp,
         mailer,
-        max_peers_per_room: cfg.max_peers_per_room,
+        max_peers_per_channel: cfg.max_peers_per_channel,
     };
 
     // ----------------------- routes -----------------------
@@ -103,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/rooms/{slug}", get(handlers::rooms::get_room))
         .route("/rooms/{slug}/join", post(handlers::rooms::join_room));
 
-    let ws = Router::new().route("/rooms/{slug}", get(signaling::ws_room));
+    let ws = Router::new().route("/servers/{slug}", get(signaling::ws_server));
 
     let cors = if cfg.cors_allow_any {
         CorsLayer::very_permissive()

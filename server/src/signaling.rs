@@ -1,8 +1,13 @@
-//! Per-room broadcast hub + WebSocket handler.
+//! Hub de broadcast por servidor + handler WebSocket.
 //!
-//! Single-node today: `tokio::sync::broadcast` fanout per slug, lazily created,
-//! torn down when the last client leaves.  For multi-node, swap the inner map
-//! for a `SignalBus` trait with a Redis or NATS JetStream impl (see HANDOFF).
+//! **Uma conexão por servidor**, não por canal. O usuário precisa, ao mesmo
+//! tempo, receber mensagem de texto de todos os canais que enxerga e ver quem
+//! está em cada canal de voz — mas fica dentro de no máximo um canal de voz.
+//! Uma conexão por canal seria N conexões por usuário.
+//!
+//! Single-node hoje: um `tokio::sync::broadcast` por servidor, criado sob
+//! demanda e recolhido quando o último socket sai. Pra multi-nó, trocar o mapa
+//! interno por um trait `SignalBus` com impl NATS ou Redis (ver ARCHITECTURE).
 
 use crate::auth::decode_token;
 use crate::state::AppState;
@@ -17,51 +22,65 @@ use axum::{
 use dashmap::DashMap;
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
-// Wire protocol (JSON over text frames)
+// Protocolo de fio (JSON em frames de texto)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
-    /// Peer-to-peer offer, targeted at a single user in the room.
+    /// Entra num canal de voz. Sair do anterior é implícito — o usuário está em
+    /// no máximo um canal de voz por servidor.
+    JoinVoice { channel_id: Uuid },
+    /// Sai do canal de voz atual, sem derrubar a conexão com o servidor.
+    LeaveVoice,
+    /// Offer P2P, endereçada a um usuário do mesmo canal de voz.
     Offer { to: Uuid, sdp: String },
-    /// Peer-to-peer answer, targeted at a single user in the room.
+    /// Answer P2P, endereçada a um usuário do mesmo canal de voz.
     Answer { to: Uuid, sdp: String },
-    /// ICE candidate for a given peer.
+    /// Candidato ICE pra um par específico.
     Ice {
         to: Uuid,
         candidate: serde_json::Value,
     },
-    /// Local mute state broadcast.
+    /// Estado local de mudo.
     Mute { muted: bool },
-    /// Local "I'm speaking" pulse — coalesce on the client before emitting.
+    /// Pulso de "estou falando" — o cliente agrupa antes de emitir.
     Speaking { level: f32 },
-    /// Graceful leave.
+    /// "Fulano está digitando" num canal de texto.
+    Typing { channel_id: Uuid },
+    /// Saída limpa da conexão.
     Leave,
-    /// Keepalive — server echoes `pong`.
+    /// Keepalive — o servidor responde `pong`.
     Ping,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMsg {
-    /// Full snapshot on join — who's already in the room.
-    Presence {
+    /// Snapshot mandado logo após conectar: quem está em cada canal de voz.
+    VoiceState {
+        channels: Vec<VoiceChannelState>,
+    },
+    /// Presença completa de um canal de voz, após alguém entrar ou sair.
+    VoicePresence {
+        channel_id: Uuid,
         peers: Vec<Peer>,
     },
-    /// A new peer entered.
-    Joined {
+    VoiceJoined {
+        channel_id: Uuid,
         peer: Peer,
     },
-    /// A peer disconnected.
-    Left {
+    VoiceLeft {
+        channel_id: Uuid,
         user_id: Uuid,
     },
-    /// Relayed signaling from another peer.
+    /// Signaling repassado de outro par.
     Offer {
         from: Uuid,
         sdp: String,
@@ -74,16 +93,35 @@ pub enum ServerMsg {
         from: Uuid,
         candidate: serde_json::Value,
     },
-    /// Presence changes.
     Mute {
+        channel_id: Uuid,
         user_id: Uuid,
         muted: bool,
     },
     Speaking {
+        channel_id: Uuid,
         user_id: Uuid,
         level: f32,
     },
-    /// Errors reported back to the client.
+    /// Mensagem nova num canal de texto. Publicada pelo handler HTTP que
+    /// persistiu — o WebSocket só transporta.
+    Message {
+        channel_id: Uuid,
+        message: serde_json::Value,
+    },
+    /// Mensagem editada ou apagada, pra quem está com o canal aberto.
+    MessageUpdated {
+        channel_id: Uuid,
+        message: serde_json::Value,
+    },
+    MessageDeleted {
+        channel_id: Uuid,
+        message_id: Uuid,
+    },
+    Typing {
+        channel_id: Uuid,
+        user_id: Uuid,
+    },
     Error {
         message: String,
     },
@@ -97,104 +135,235 @@ pub struct Peer {
     pub muted: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct VoiceChannelState {
+    pub channel_id: Uuid,
+    pub peers: Vec<Peer>,
+}
+
 // ---------------------------------------------------------------------------
-// Internal broadcast envelope (routed across all connected sockets in a room)
+// Envelope interno (roteado entre todos os sockets do servidor)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 struct Envelope {
-    /// When set, only the matching user_id should deliver. None = broadcast to all.
+    /// Quando preenchido, só o usuário correspondente entrega. None = todos.
     target: Option<Uuid>,
-    /// Sender (filtered out of their own broadcast).
+    /// Quando preenchido, só quem está NESTE canal de voz entrega.
+    scope: Option<Uuid>,
+    /// Quem enviou (filtrado do próprio broadcast).
     origin: Uuid,
     payload: ServerMsg,
 }
 
-/// Decide se um envelope na broadcast da sala deve ser entregue ao socket de `me`.
+/// Decide se um envelope na broadcast do servidor deve ser entregue ao socket de
+/// `me`, que no momento está no canal de voz `my_voice` (ou em nenhum).
 ///
-/// Duas regras, nesta ordem:
+/// Três regras, nesta ordem:
 /// 1. Ninguém recebe eco do que enviou — a não ser que a mensagem seja
 ///    endereçada a si mesmo (caso dos erros que o servidor devolve ao remetente).
-/// 2. Envelope com `target` só chega em quem é o alvo; sem `target`, é broadcast.
-fn should_deliver(env: &Envelope, me: Uuid) -> bool {
+/// 2. Envelope com `target` só chega em quem é o alvo.
+/// 3. Envelope com `scope` só chega em quem está naquele canal de voz. Sem
+///    `scope`, vale pro servidor inteiro (mensagem de texto, por exemplo).
+fn should_deliver(env: &Envelope, me: Uuid, my_voice: Option<Uuid>) -> bool {
     if env.origin == me && env.target != Some(me) {
         return false;
     }
-    match env.target {
-        Some(t) => t == me,
+    if let Some(t) = env.target {
+        return t == me;
+    }
+    match env.scope {
+        Some(ch) => my_voice == Some(ch),
         None => true,
     }
 }
 
 // ---------------------------------------------------------------------------
-// Hub — owns per-room channels.
+// Hub — um canal de broadcast por servidor, presença de voz por canal.
 // ---------------------------------------------------------------------------
 
 pub struct Hub {
-    rooms: DashMap<String, RoomChannel>,
+    servers: DashMap<String, ServerChannel>,
 }
 
-struct RoomChannel {
+struct ServerChannel {
     tx: broadcast::Sender<Envelope>,
-    /// Current presence. Lock order: always acquire briefly.
-    peers: parking_lot::RwLock<Vec<Peer>>,
+    /// channel_id → quem está falando ali. Lock sempre por pouco tempo.
+    voice: parking_lot::RwLock<HashMap<Uuid, Vec<Peer>>>,
+}
+
+/// Motivo de recusa ao entrar num canal de voz.
+#[derive(Debug, PartialEq, Eq)]
+pub enum VoiceJoinError {
+    /// A mesh P2P satura acima de ~4 pessoas; o cap é o guarda-corpo até o SFU.
+    ChannelFull { max: usize },
 }
 
 impl Hub {
     pub fn new() -> Self {
         Self {
-            rooms: DashMap::new(),
+            servers: DashMap::new(),
         }
     }
 
-    fn get_or_create(&self, slug: &str) -> broadcast::Sender<Envelope> {
-        self.rooms
-            .entry(slug.to_string())
-            .or_insert_with(|| RoomChannel {
+    fn get_or_create(&self, server: &str) -> broadcast::Sender<Envelope> {
+        self.servers
+            .entry(server.to_string())
+            .or_insert_with(|| ServerChannel {
                 tx: broadcast::channel(512).0,
-                peers: parking_lot::RwLock::new(Vec::new()),
+                voice: parking_lot::RwLock::new(HashMap::new()),
             })
             .tx
             .clone()
     }
 
-    fn presence(&self, slug: &str) -> Vec<Peer> {
-        self.rooms
-            .get(slug)
-            .map(|c| c.peers.read().clone())
+    /// Entra (ou troca) de canal de voz. Devolve a presença nova do canal.
+    ///
+    /// Sair do canal anterior é implícito: no Discord você não fica em dois
+    /// canais de voz ao mesmo tempo, e deixar presença órfã pra trás faria o
+    /// contador de "ao vivo" mentir.
+    pub fn join_voice(
+        &self,
+        server: &str,
+        channel_id: Uuid,
+        peer: Peer,
+        max_peers: usize,
+    ) -> Result<(Vec<Peer>, Option<Uuid>), VoiceJoinError> {
+        let Some(sc) = self.servers.get(server) else {
+            return Ok((vec![peer], None));
+        };
+        let mut voice = sc.voice.write();
+
+        // Tira de qualquer outro canal antes de entrar no novo.
+        let mut left_from = None;
+        for (cid, peers) in voice.iter_mut() {
+            if *cid != channel_id && peers.iter().any(|p| p.user_id == peer.user_id) {
+                peers.retain(|p| p.user_id != peer.user_id);
+                left_from = Some(*cid);
+            }
+        }
+
+        let entry = voice.entry(channel_id).or_default();
+        let already_here = entry.iter().any(|p| p.user_id == peer.user_id);
+
+        // Cap conta gente distinta: reconectar não pode ser barrado por si mesmo.
+        if !already_here && entry.len() >= max_peers {
+            return Err(VoiceJoinError::ChannelFull { max: max_peers });
+        }
+
+        entry.retain(|p| p.user_id != peer.user_id); // de-dup na reconexão
+        entry.push(peer);
+        let presence = entry.clone();
+
+        voice.retain(|_, peers| !peers.is_empty());
+        Ok((presence, left_from))
+    }
+
+    /// Sai do canal de voz atual. Devolve (canal, presença restante).
+    pub fn leave_voice(&self, server: &str, user_id: Uuid) -> Option<(Uuid, Vec<Peer>)> {
+        let sc = self.servers.get(server)?;
+        let mut voice = sc.voice.write();
+
+        let found = voice
+            .iter()
+            .find(|(_, peers)| peers.iter().any(|p| p.user_id == user_id))
+            .map(|(cid, _)| *cid)?;
+
+        let peers = voice.get_mut(&found)?;
+        peers.retain(|p| p.user_id != user_id);
+        let remaining = peers.clone();
+
+        voice.retain(|_, peers| !peers.is_empty());
+        Some((found, remaining))
+    }
+
+    /// Em qual canal de voz o usuário está, se estiver em algum.
+    pub fn voice_channel_of(&self, server: &str, user_id: Uuid) -> Option<Uuid> {
+        let sc = self.servers.get(server)?;
+        let voice = sc.voice.read();
+        voice
+            .iter()
+            .find(|(_, peers)| peers.iter().any(|p| p.user_id == user_id))
+            .map(|(cid, _)| *cid)
+    }
+
+    pub fn voice_presence(&self, server: &str, channel_id: Uuid) -> Vec<Peer> {
+        self.servers
+            .get(server)
+            .and_then(|sc| sc.voice.read().get(&channel_id).cloned())
             .unwrap_or_default()
     }
 
-    fn add_peer(&self, slug: &str, peer: Peer) {
-        if let Some(c) = self.rooms.get(slug) {
-            let mut w = c.peers.write();
-            w.retain(|p| p.user_id != peer.user_id); // de-dup on reconnect
-            w.push(peer);
-        }
+    /// Snapshot de todos os canais de voz com gente dentro.
+    pub fn voice_snapshot(&self, server: &str) -> Vec<VoiceChannelState> {
+        self.servers
+            .get(server)
+            .map(|sc| {
+                sc.voice
+                    .read()
+                    .iter()
+                    .map(|(cid, peers)| VoiceChannelState {
+                        channel_id: *cid,
+                        peers: peers.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
-    fn remove_peer(&self, slug: &str, user_id: Uuid) -> bool {
-        let mut drop_room = false;
-        if let Some(c) = self.rooms.get(slug) {
-            let mut w = c.peers.write();
-            w.retain(|p| p.user_id != user_id);
-            if w.is_empty() {
-                drop_room = true;
-            }
-        }
-        if drop_room {
-            self.rooms.remove(slug);
-        }
-        drop_room
-    }
-
-    fn set_muted(&self, slug: &str, user_id: Uuid, muted: bool) {
-        if let Some(c) = self.rooms.get(slug) {
-            let mut w = c.peers.write();
-            if let Some(p) = w.iter_mut().find(|p| p.user_id == user_id) {
+    /// Atualiza o mudo e devolve o canal onde a pessoa está.
+    pub fn set_muted(&self, server: &str, user_id: Uuid, muted: bool) -> Option<Uuid> {
+        let sc = self.servers.get(server)?;
+        let mut voice = sc.voice.write();
+        for (cid, peers) in voice.iter_mut() {
+            if let Some(p) = peers.iter_mut().find(|p| p.user_id == user_id) {
                 p.muted = muted;
+                return Some(*cid);
             }
         }
+        None
+    }
+
+    /// Quantas pessoas no canal de voz agora — usado pelo detalhe do servidor.
+    pub fn live_in(&self, server: &str, channel_id: Uuid) -> usize {
+        self.servers
+            .get(server)
+            .map(|sc| sc.voice.read().get(&channel_id).map_or(0, |p| p.len()))
+            .unwrap_or(0)
+    }
+
+    /// Publica um evento no servidor inteiro. Usado pelos handlers HTTP que
+    /// persistem (mensagem nova, edição, remoção) — a escrita é HTTP, o aviso
+    /// em tempo real é WebSocket.
+    ///
+    /// No-op quando ninguém está conectado naquele servidor: sem socket, não há
+    /// pra quem avisar, e criar o canal à toa só vazaria memória.
+    pub fn publish(&self, server: &str, origin: Uuid, payload: ServerMsg) {
+        if let Some(sc) = self.servers.get(server) {
+            let _ = sc.tx.send(Envelope {
+                target: None,
+                scope: None,
+                origin,
+                payload,
+            });
+        }
+    }
+
+    /// Recolhe o servidor quando o último socket sai.
+    fn reclaim_if_idle(&self, server: &str) -> bool {
+        let idle = self
+            .servers
+            .get(server)
+            .map(|sc| sc.tx.receiver_count() == 0 && sc.voice.read().is_empty())
+            .unwrap_or(false);
+        if idle {
+            self.servers.remove(server);
+        }
+        idle
+    }
+
+    pub fn active_servers(&self) -> usize {
+        self.servers.len()
     }
 }
 
@@ -205,24 +374,23 @@ impl Default for Hub {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP upgrade handler — `GET /ws/rooms/:slug`
+// Handler de upgrade — `GET /ws/servers/{slug}`
 //
-// Authentication: JWT travels as a WebSocket subprotocol, NOT a query param —
-// query strings end up in access logs, proxy logs, and browser history, which
-// leaks bearer tokens. The client does:
+// Autenticação: o JWT viaja como subprotocol do WebSocket, NÃO como query
+// param — query string acaba em log de acesso, log de proxy e histórico de
+// browser, o que vaza o bearer token. O cliente faz:
 //
 //     new WebSocket(url, ["bc.v1", "token." + jwt])
 //
-// and we echo back "bc.v1" as the accepted subprotocol. The server rejects
-// the upgrade if the token is missing or invalid.
+// e o servidor devolve "bc.v1" como subprotocol aceito.
 // ---------------------------------------------------------------------------
 
 const WS_PROTOCOL: &str = "bc.v1";
 const WS_TOKEN_PREFIX: &str = "token.";
 
-/// Pulls the JWT out of the Sec-WebSocket-Protocol header.
-/// The header can list multiple protocols comma-separated; we scan for one
-/// starting with `token.` and return the suffix.
+/// Extrai o JWT do header Sec-WebSocket-Protocol. O header pode listar vários
+/// protocolos separados por vírgula; varremos procurando o que começa com
+/// `token.` e devolvemos o sufixo.
 fn extract_token(headers: &HeaderMap) -> Option<String> {
     for raw in headers.get_all(SEC_WEBSOCKET_PROTOCOL).iter() {
         let Ok(s) = raw.to_str() else { continue };
@@ -238,7 +406,7 @@ fn extract_token(headers: &HeaderMap) -> Option<String> {
     None
 }
 
-pub async fn ws_room(
+pub async fn ws_server(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
     Path(slug): Path<String>,
@@ -249,7 +417,6 @@ pub async fn ws_room(
         None => return (StatusCode::UNAUTHORIZED, "missing token subprotocol").into_response(),
     };
 
-    // Validate JWT up front; reject before upgrading if we can.
     let claims = match decode_token(&state.jwt_secret, &token) {
         Ok(c) => c,
         Err(_) => return (StatusCode::UNAUTHORIZED, "invalid token").into_response(),
@@ -259,69 +426,27 @@ pub async fn ws_room(
         Err(_) => return (StatusCode::UNAUTHORIZED, "bad subject").into_response(),
     };
 
-    // Load the room. Need password_hash to know if it's locked (can't trust the
-    // client to have called /join first for unlocked rooms — that would break
-    // the one-click invite flow — but for locked rooms, membership proves the
-    // password was validated).
-    let room = match sqlx::query!(
-        r#"SELECT id, (password_hash IS NOT NULL) AS "locked!" FROM rooms WHERE slug = $1"#,
-        slug
+    // Só membro conecta. 404 e não 403 pelo mesmo motivo do HTTP: responder
+    // "proibido" confirmaria que o servidor existe pra quem não faz parte dele.
+    let server = sqlx::query!(
+        r#"
+        SELECT s.id, (m.user_id IS NOT NULL) AS "is_member!"
+        FROM servers s
+        LEFT JOIN server_members m ON m.server_id = s.id AND m.user_id = $2
+        WHERE s.slug = $1
+        "#,
+        slug,
+        user_id
     )
     .fetch_optional(&state.db)
-    .await
-    {
-        Ok(Some(r)) => r,
-        Ok(None) => return (StatusCode::NOT_FOUND, "room not found").into_response(),
+    .await;
+
+    let server = match server {
+        Ok(Some(r)) if r.is_member => r,
+        Ok(_) => return (StatusCode::NOT_FOUND, "server not found").into_response(),
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response(),
     };
 
-    // Locked rooms require a prior POST /rooms/:slug/join (which validates the
-    // password and creates the membership row). The WS never auto-creates
-    // membership for locked rooms — otherwise any JWT holder would bypass the
-    // password by opening the WS directly.
-    if room.locked {
-        let is_member = sqlx::query_scalar!(
-            r#"SELECT 1 AS "e!" FROM memberships WHERE room_id = $1 AND user_id = $2"#,
-            room.id,
-            user_id
-        )
-        .fetch_optional(&state.db)
-        .await
-        .map(|o| o.is_some())
-        .unwrap_or(false);
-        if !is_member {
-            return (
-                StatusCode::FORBIDDEN,
-                "room is locked — call /rooms/{slug}/join first",
-            )
-                .into_response();
-        }
-    } else {
-        // Unlocked rooms: auto-add membership on first WS connect (convenience).
-        let _ = sqlx::query!(
-            "INSERT INTO memberships (room_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-            room.id,
-            user_id
-        )
-        .execute(&state.db)
-        .await;
-    }
-
-    // Peer cap per room. Prevents mesh topology DoS and accidental 20-person
-    // "rooms" that would saturate everyone's uplink.
-    // Allow the user to reconnect (same user_id already counted is deduped in
-    // add_peer), so we only reject when they would actually be a NEW peer.
-    let current = state.hub.slug_count(&slug);
-    let already_present = state.hub.has_peer(&slug, user_id);
-    if !already_present && current >= state.max_peers_per_room {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            format!("room full (max {} peers)", state.max_peers_per_room),
-        )
-            .into_response();
-    }
-
-    // Fetch display name (cheap, one query).
     let display_name = sqlx::query_scalar!("SELECT display_name FROM users WHERE id = $1", user_id)
         .fetch_optional(&state.db)
         .await
@@ -329,59 +454,42 @@ pub async fn ws_room(
         .flatten()
         .flatten();
 
-    // Echo the accepted subprotocol back — the browser's WebSocket client
-    // rejects the handshake if we don't confirm one of the protocols it offered.
-    ws.protocols([WS_PROTOCOL])
-        .on_upgrade(move |socket| handle_socket(socket, state, slug, user_id, display_name))
+    ws.protocols([WS_PROTOCOL]).on_upgrade(move |socket| {
+        handle_socket(socket, state, slug, server.id, user_id, display_name)
+    })
 }
 
 async fn handle_socket(
     socket: WebSocket,
     state: AppState,
-    slug: String,
+    server_slug: String,
+    server_id: Uuid,
     user_id: Uuid,
     display_name: Option<String>,
 ) {
-    let tx = state.hub.get_or_create(&slug);
+    let tx = state.hub.get_or_create(&server_slug);
     let mut rx = tx.subscribe();
     let (mut sender, mut receiver) = socket.split();
 
-    // Register presence BEFORE sending the initial snapshot.
-    let me = Peer {
-        user_id,
-        display_name: display_name.clone(),
-        muted: false,
-    };
-    state.hub.add_peer(&slug, me.clone());
+    // Em qual canal de voz este socket está. Compartilhado entre a task que
+    // ingere (que muda) e a que entrega (que filtra por escopo).
+    let my_voice: Arc<parking_lot::RwLock<Option<Uuid>>> = Arc::new(parking_lot::RwLock::new(None));
 
-    // 1) Send initial presence snapshot (who's already here).
-    let peers_now = state.hub.presence(&slug);
-    let snapshot = serde_json::to_string(&ServerMsg::Presence { peers: peers_now })
-        .unwrap_or_else(|_| "{}".into());
+    // 1) Snapshot: quem está em cada canal de voz do servidor.
+    let snapshot = serde_json::to_string(&ServerMsg::VoiceState {
+        channels: state.hub.voice_snapshot(&server_slug),
+    })
+    .unwrap_or_else(|_| "{}".into());
     if sender.send(Message::Text(snapshot.into())).await.is_err() {
-        state.hub.remove_peer(&slug, user_id);
         return;
     }
 
-    // 2) Announce to everyone else.
-    let _ = tx.send(Envelope {
-        target: None,
-        origin: user_id,
-        payload: ServerMsg::Joined { peer: me.clone() },
-    });
-
-    // Stamp room as active now.
-    let _ = sqlx::query!(
-        "UPDATE rooms SET last_active_at = NOW() WHERE slug = $1",
-        slug
-    )
-    .execute(&state.db)
-    .await;
-
-    // --- forward task: pull from broadcast, push to this socket ----------
+    // --- entrega: broadcast do servidor → este socket ---------------------
+    let forward_voice = my_voice.clone();
     let mut forward = tokio::spawn(async move {
         while let Ok(env) = rx.recv().await {
-            if !should_deliver(&env, user_id) {
+            let current = *forward_voice.read();
+            if !should_deliver(&env, user_id, current) {
                 continue;
             }
             let body = match serde_json::to_string(&env.payload) {
@@ -394,118 +502,297 @@ async fn handle_socket(
         }
     });
 
-    // --- ingest loop: read from socket, fan out via broadcast ------------
-    let ingest_hub = state.hub.clone();
+    // --- ingestão: este socket → broadcast do servidor --------------------
+    let ingest_state = state.clone();
     let ingest_tx = tx.clone();
-    let ingest_slug = slug.clone();
+    let ingest_slug = server_slug.clone();
+    let ingest_voice = my_voice.clone();
+    let ingest_name = display_name.clone();
     let mut ingest = tokio::spawn(async move {
+        let hub = &ingest_state.hub;
+
+        let err_to_self = |msg: &str| Envelope {
+            target: Some(user_id),
+            scope: None,
+            origin: user_id,
+            payload: ServerMsg::Error {
+                message: msg.to_string(),
+            },
+        };
+
         while let Some(Ok(msg)) = receiver.next().await {
-            match msg {
-                Message::Text(text) => {
-                    let parsed: Result<ClientMsg, _> = serde_json::from_str(&text);
-                    let Ok(client_msg) = parsed else {
+            let Message::Text(text) = msg else {
+                match msg {
+                    Message::Close(_) => break,
+                    _ => continue, // binário e frames de controle: ignorados
+                }
+            };
+
+            let Ok(client_msg) = serde_json::from_str::<ClientMsg>(&text) else {
+                let _ = ingest_tx.send(err_to_self("invalid message"));
+                continue;
+            };
+
+            match client_msg {
+                ClientMsg::JoinVoice { channel_id } => {
+                    // O canal precisa existir, ser deste servidor e ser de voz —
+                    // senão dá pra entrar num canal de texto ou de outro servidor
+                    // só mandando o uuid.
+                    let ok = sqlx::query_scalar!(
+                        r#"SELECT 1 AS "e!" FROM channels
+                           WHERE id = $1 AND server_id = $2 AND kind = 'voice'"#,
+                        channel_id,
+                        server_id
+                    )
+                    .fetch_optional(&ingest_state.db)
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some();
+
+                    if !ok {
+                        let _ = ingest_tx.send(err_to_self("canal de voz inválido"));
+                        continue;
+                    }
+
+                    let peer = Peer {
+                        user_id,
+                        display_name: ingest_name.clone(),
+                        muted: false,
+                    };
+                    match hub.join_voice(
+                        &ingest_slug,
+                        channel_id,
+                        peer.clone(),
+                        ingest_state.max_peers_per_channel,
+                    ) {
+                        Err(VoiceJoinError::ChannelFull { max }) => {
+                            let _ = ingest_tx
+                                .send(err_to_self(&format!("canal de voz cheio (máximo {max})")));
+                            continue;
+                        }
+                        Ok((presence, left_from)) => {
+                            *ingest_voice.write() = Some(channel_id);
+
+                            // Se trocou de canal, avisa o canal anterior.
+                            if let Some(old) = left_from {
+                                let remaining = hub.voice_presence(&ingest_slug, old);
+                                let _ = ingest_tx.send(Envelope {
+                                    target: None,
+                                    scope: None,
+                                    origin: user_id,
+                                    payload: ServerMsg::VoiceLeft {
+                                        channel_id: old,
+                                        user_id,
+                                    },
+                                });
+                                let _ = ingest_tx.send(Envelope {
+                                    target: None,
+                                    scope: None,
+                                    origin: user_id,
+                                    payload: ServerMsg::VoicePresence {
+                                        channel_id: old,
+                                        peers: remaining,
+                                    },
+                                });
+                            }
+
+                            // Presença vai pro servidor inteiro (a sidebar
+                            // mostra quem está em cada canal), não só pro canal.
+                            let _ = ingest_tx.send(Envelope {
+                                target: None,
+                                scope: None,
+                                origin: user_id,
+                                payload: ServerMsg::VoiceJoined { channel_id, peer },
+                            });
+                            let _ = ingest_tx.send(Envelope {
+                                target: None,
+                                scope: None,
+                                origin: user_id,
+                                payload: ServerMsg::VoicePresence {
+                                    channel_id,
+                                    peers: presence.clone(),
+                                },
+                            });
+                            // …e o próprio recebe a lista pra montar a mesh.
+                            let _ = ingest_tx.send(Envelope {
+                                target: Some(user_id),
+                                scope: None,
+                                origin: Uuid::nil(),
+                                payload: ServerMsg::VoicePresence {
+                                    channel_id,
+                                    peers: presence,
+                                },
+                            });
+                        }
+                    }
+                }
+
+                ClientMsg::LeaveVoice => {
+                    if let Some((channel_id, remaining)) = hub.leave_voice(&ingest_slug, user_id) {
+                        *ingest_voice.write() = None;
                         let _ = ingest_tx.send(Envelope {
-                            target: Some(user_id),
+                            target: None,
+                            scope: None,
                             origin: user_id,
-                            payload: ServerMsg::Error {
-                                message: "invalid message".into(),
+                            payload: ServerMsg::VoiceLeft {
+                                channel_id,
+                                user_id,
                             },
                         });
-                        continue;
-                    };
-                    let env = match client_msg {
-                        ClientMsg::Offer { to, sdp } => Envelope {
+                        let _ = ingest_tx.send(Envelope {
+                            target: None,
+                            scope: None,
+                            origin: user_id,
+                            payload: ServerMsg::VoicePresence {
+                                channel_id,
+                                peers: remaining,
+                            },
+                        });
+                    }
+                }
+
+                // SDP e ICE só trafegam entre pares do MESMO canal de voz. Sem
+                // essa checagem, qualquer membro do servidor mandaria offer pra
+                // qualquer outro e forçaria uma negociação fora do canal.
+                ClientMsg::Offer { to, sdp } => {
+                    if same_voice_channel(hub, &ingest_slug, user_id, to) {
+                        let _ = ingest_tx.send(Envelope {
                             target: Some(to),
+                            scope: None,
                             origin: user_id,
                             payload: ServerMsg::Offer { from: user_id, sdp },
-                        },
-                        ClientMsg::Answer { to, sdp } => Envelope {
+                        });
+                    } else {
+                        let _ = ingest_tx.send(err_to_self("par não está no seu canal de voz"));
+                    }
+                }
+                ClientMsg::Answer { to, sdp } => {
+                    if same_voice_channel(hub, &ingest_slug, user_id, to) {
+                        let _ = ingest_tx.send(Envelope {
                             target: Some(to),
+                            scope: None,
                             origin: user_id,
                             payload: ServerMsg::Answer { from: user_id, sdp },
-                        },
-                        ClientMsg::Ice { to, candidate } => Envelope {
+                        });
+                    } else {
+                        let _ = ingest_tx.send(err_to_self("par não está no seu canal de voz"));
+                    }
+                }
+                ClientMsg::Ice { to, candidate } => {
+                    if same_voice_channel(hub, &ingest_slug, user_id, to) {
+                        let _ = ingest_tx.send(Envelope {
                             target: Some(to),
+                            scope: None,
                             origin: user_id,
                             payload: ServerMsg::Ice {
                                 from: user_id,
                                 candidate,
                             },
-                        },
-                        ClientMsg::Mute { muted } => {
-                            ingest_hub.set_muted(&ingest_slug, user_id, muted);
-                            Envelope {
-                                target: None,
-                                origin: user_id,
-                                payload: ServerMsg::Mute { user_id, muted },
-                            }
-                        }
-                        ClientMsg::Speaking { level } => Envelope {
-                            target: None,
-                            origin: user_id,
-                            payload: ServerMsg::Speaking { user_id, level },
-                        },
-                        ClientMsg::Leave => break,
-                        ClientMsg::Ping => Envelope {
-                            target: Some(user_id),
-                            origin: user_id,
-                            payload: ServerMsg::Pong,
-                        },
-                    };
-                    let _ = ingest_tx.send(env);
+                        });
+                    }
+                    // ICE fora do canal é descartado em silêncio: chega aos
+                    // borbotões e um erro por candidato viraria enxurrada.
                 }
-                Message::Binary(_) => {} // ignore — JSON only
-                Message::Close(_) => break,
-                _ => {}
+
+                ClientMsg::Mute { muted } => {
+                    if let Some(channel_id) = hub.set_muted(&ingest_slug, user_id, muted) {
+                        let _ = ingest_tx.send(Envelope {
+                            target: None,
+                            scope: None,
+                            origin: user_id,
+                            payload: ServerMsg::Mute {
+                                channel_id,
+                                user_id,
+                                muted,
+                            },
+                        });
+                    }
+                }
+
+                ClientMsg::Speaking { level } => {
+                    let current = *ingest_voice.read();
+                    if let Some(channel_id) = current {
+                        // Escopado no canal: quem está em outro canal não precisa
+                        // receber pulso de fala a 10Hz de gente que não ouve.
+                        let _ = ingest_tx.send(Envelope {
+                            target: None,
+                            scope: Some(channel_id),
+                            origin: user_id,
+                            payload: ServerMsg::Speaking {
+                                channel_id,
+                                user_id,
+                                level,
+                            },
+                        });
+                    }
+                }
+
+                ClientMsg::Typing { channel_id } => {
+                    let _ = ingest_tx.send(Envelope {
+                        target: None,
+                        scope: None,
+                        origin: user_id,
+                        payload: ServerMsg::Typing {
+                            channel_id,
+                            user_id,
+                        },
+                    });
+                }
+
+                ClientMsg::Leave => break,
+                ClientMsg::Ping => {
+                    let _ = ingest_tx.send(Envelope {
+                        target: Some(user_id),
+                        scope: None,
+                        origin: Uuid::nil(),
+                        payload: ServerMsg::Pong,
+                    });
+                }
             }
         }
     });
 
-    // Whichever task finishes first, tear both down.
     tokio::select! {
         _ = &mut forward => { ingest.abort(); }
         _ = &mut ingest  => { forward.abort(); }
     }
 
-    // Presence cleanup + announce departure.
-    let dropped = state.hub.remove_peer(&slug, user_id);
-    let _ = tx.send(Envelope {
-        target: None,
-        origin: user_id,
-        payload: ServerMsg::Left { user_id },
-    });
+    // Limpeza: sair do canal de voz e avisar quem ficou.
+    if let Some((channel_id, remaining)) = state.hub.leave_voice(&server_slug, user_id) {
+        let _ = tx.send(Envelope {
+            target: None,
+            scope: None,
+            origin: user_id,
+            payload: ServerMsg::VoiceLeft {
+                channel_id,
+                user_id,
+            },
+        });
+        let _ = tx.send(Envelope {
+            target: None,
+            scope: None,
+            origin: user_id,
+            payload: ServerMsg::VoicePresence {
+                channel_id,
+                peers: remaining,
+            },
+        });
+    }
 
-    if dropped {
-        tracing::debug!(%slug, "room emptied and reclaimed");
+    drop(tx);
+    if state.hub.reclaim_if_idle(&server_slug) {
+        tracing::debug!(%server_slug, "servidor sem ninguém conectado, recolhido");
     }
 }
 
-// Expose Hub::clone-via-Arc by just wrapping in Arc where we use it.
-
-impl Hub {
-    /// Convenience for HTTP handlers: lightweight presence snapshot without locking callers.
-    pub fn slug_count(&self, slug: &str) -> usize {
-        self.rooms
-            .get(slug)
-            .map(|r| r.peers.read().len())
-            .unwrap_or(0)
-    }
-
-    /// True if `user_id` is currently listed as a peer in `slug`.
-    /// Used to distinguish "new peer would exceed cap" from "same user reconnecting".
-    pub fn has_peer(&self, slug: &str, user_id: Uuid) -> bool {
-        self.rooms
-            .get(slug)
-            .map(|r| r.peers.read().iter().any(|p| p.user_id == user_id))
-            .unwrap_or(false)
-    }
-
-    pub fn active_rooms(&self) -> usize {
-        self.rooms.len()
+/// Os dois estão no mesmo canal de voz?
+fn same_voice_channel(hub: &Hub, server: &str, a: Uuid, b: Uuid) -> bool {
+    match hub.voice_channel_of(server, a) {
+        Some(ch) => hub.voice_channel_of(server, b) == Some(ch),
+        None => false,
     }
 }
-
-// Make Arc<Hub> cloneable in handler arg lists via standard Arc clone.
 
 // ---------------------------------------------------------------------------
 
@@ -522,11 +809,12 @@ mod tests {
         }
     }
 
-    fn envelope(origin: Uuid, target: Option<Uuid>) -> Envelope {
+    fn envelope(origin: Uuid, target: Option<Uuid>, scope: Option<Uuid>) -> Envelope {
         Envelope {
             target,
+            scope,
             origin,
-            payload: ServerMsg::Left { user_id: origin },
+            payload: ServerMsg::Pong,
         }
     }
 
@@ -536,6 +824,14 @@ mod tests {
             h.append(SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_str(p).unwrap());
         }
         h
+    }
+
+    /// Hub com um servidor já criado — `join_voice` exige que ele exista, que é
+    /// o que o handshake faz antes de qualquer coisa.
+    fn hub_with(server: &str) -> Hub {
+        let hub = Hub::new();
+        hub.get_or_create(server);
+        hub
     }
 
     // --- autenticação no handshake ----------------------------------------
@@ -554,7 +850,6 @@ mod tests {
 
     #[test]
     fn token_e_encontrado_em_headers_repetidos() {
-        // Cliente pode mandar Sec-WebSocket-Protocol em linhas separadas.
         let h = headers_with(&["bc.v1", "token.dois"]);
         assert_eq!(extract_token(&h).as_deref(), Some("dois"));
     }
@@ -567,14 +862,11 @@ mod tests {
 
     #[test]
     fn prefixo_token_vazio_nao_conta_como_token() {
-        // "token." sozinho não é credencial — não pode virar Some("").
         assert_eq!(extract_token(&headers_with(&["bc.v1, token."])), None);
     }
 
     #[test]
     fn jwt_com_pontos_sobrevive_ao_parse() {
-        // JWT tem 3 partes separadas por ponto; o prefixo é "token." e o resto
-        // precisa voltar inteiro.
         let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.assinatura-aqui";
         let h = headers_with(&[&format!("bc.v1, token.{jwt}")]);
         assert_eq!(extract_token(&h).as_deref(), Some(jwt));
@@ -583,17 +875,13 @@ mod tests {
     // --- roteamento de mensagens ------------------------------------------
 
     #[test]
-    fn broadcast_chega_em_todo_mundo_menos_em_quem_enviou() {
+    fn broadcast_do_servidor_chega_em_todo_mundo_menos_em_quem_enviou() {
         let eu = Uuid::new_v4();
         let outro = Uuid::new_v4();
-        let env = envelope(outro, None);
 
+        assert!(should_deliver(&envelope(outro, None, None), eu, None));
         assert!(
-            should_deliver(&env, eu),
-            "broadcast de terceiro deve chegar"
-        );
-        assert!(
-            !should_deliver(&envelope(eu, None), eu),
+            !should_deliver(&envelope(eu, None, None), eu, None),
             "ninguém recebe eco do próprio broadcast"
         );
     }
@@ -602,105 +890,234 @@ mod tests {
     fn mensagem_direcionada_so_chega_no_alvo() {
         let alvo = Uuid::new_v4();
         let outro = Uuid::new_v4();
-        let remetente = Uuid::new_v4();
-        let env = envelope(remetente, Some(alvo));
+        let env = envelope(Uuid::new_v4(), Some(alvo), None);
 
-        assert!(should_deliver(&env, alvo));
+        assert!(should_deliver(&env, alvo, None));
         assert!(
-            !should_deliver(&env, outro),
-            "SDP/ICE de outro par não pode vazar pra sala inteira"
+            !should_deliver(&env, outro, None),
+            "SDP/ICE de outro par não pode vazar"
         );
     }
 
     #[test]
     fn mensagem_do_servidor_pro_proprio_remetente_chega() {
-        // Caso do ServerMsg::Error: origin == target == eu. A regra do "sem eco"
-        // não pode engolir essa.
         let eu = Uuid::new_v4();
-        assert!(should_deliver(&envelope(eu, Some(eu)), eu));
-    }
-
-    // --- Hub / presença ----------------------------------------------------
-
-    #[test]
-    fn sala_nasce_no_get_or_create_e_some_quando_esvazia() {
-        let hub = Hub::new();
-        let id = Uuid::new_v4();
-
-        hub.get_or_create("sala1");
-        hub.add_peer("sala1", peer(id));
-        assert_eq!(hub.active_rooms(), 1);
-        assert_eq!(hub.slug_count("sala1"), 1);
-
-        assert!(hub.remove_peer("sala1", id), "último a sair derruba a sala");
-        assert_eq!(hub.active_rooms(), 0);
-        assert_eq!(hub.slug_count("sala1"), 0);
+        assert!(should_deliver(&envelope(eu, Some(eu), None), eu, None));
     }
 
     #[test]
-    fn sala_com_gente_dentro_nao_e_derrubada() {
-        let hub = Hub::new();
-        let a = Uuid::new_v4();
-        let b = Uuid::new_v4();
-        hub.get_or_create("sala2");
-        hub.add_peer("sala2", peer(a));
-        hub.add_peer("sala2", peer(b));
+    fn evento_escopado_so_chega_em_quem_esta_naquele_canal_de_voz() {
+        let canal_a = Uuid::new_v4();
+        let canal_b = Uuid::new_v4();
+        let quem_enviou = Uuid::new_v4();
+        let eu = Uuid::new_v4();
+        let env = envelope(quem_enviou, None, Some(canal_a));
 
-        assert!(!hub.remove_peer("sala2", a), "ainda tem gente na sala");
-        assert_eq!(hub.slug_count("sala2"), 1);
-        assert!(hub.has_peer("sala2", b));
-        assert!(!hub.has_peer("sala2", a));
-    }
-
-    #[test]
-    fn reconexao_do_mesmo_usuario_nao_duplica_presenca() {
-        let hub = Hub::new();
-        let id = Uuid::new_v4();
-        hub.get_or_create("sala3");
-
-        hub.add_peer("sala3", peer(id));
-        hub.add_peer("sala3", peer(id));
-
-        assert_eq!(
-            hub.slug_count("sala3"),
-            1,
-            "reconectar não pode contar duas vezes — isso furaria o cap de peers"
+        assert!(should_deliver(&env, eu, Some(canal_a)), "estou no canal");
+        assert!(
+            !should_deliver(&env, eu, Some(canal_b)),
+            "pulso de fala do canal A não pode chegar em quem está no B"
+        );
+        assert!(
+            !should_deliver(&env, eu, None),
+            "quem não está em canal nenhum não recebe evento de voz"
         );
     }
 
     #[test]
-    fn add_peer_em_sala_inexistente_e_no_op() {
-        // add_peer depende do get_or_create ter rodado antes (é o que o
-        // handshake faz). Sem isso, some silenciosamente.
-        let hub = Hub::new();
-        hub.add_peer("nunca-criada", peer(Uuid::new_v4()));
-        assert_eq!(hub.slug_count("nunca-criada"), 0);
-        assert_eq!(hub.active_rooms(), 0);
+    fn mensagem_de_texto_chega_em_todo_mundo_do_servidor() {
+        // Sem escopo: quem está numa call e quem não está recebem igual.
+        let env = envelope(Uuid::new_v4(), None, None);
+        let eu = Uuid::new_v4();
+        assert!(should_deliver(&env, eu, None));
+        assert!(should_deliver(&env, eu, Some(Uuid::new_v4())));
+    }
+
+    // --- presença de voz ---------------------------------------------------
+
+    #[test]
+    fn entrar_no_canal_de_voz_aparece_na_presenca() {
+        let hub = hub_with("srv");
+        let canal = Uuid::new_v4();
+        let eu = Uuid::new_v4();
+
+        let (presenca, saiu_de) = hub.join_voice("srv", canal, peer(eu), 6).unwrap();
+        assert_eq!(presenca.len(), 1);
+        assert!(saiu_de.is_none());
+        assert_eq!(hub.live_in("srv", canal), 1);
+        assert_eq!(hub.voice_channel_of("srv", eu), Some(canal));
     }
 
     #[test]
-    fn set_muted_reflete_no_snapshot_de_presenca() {
-        let hub = Hub::new();
-        let id = Uuid::new_v4();
-        hub.get_or_create("sala4");
-        hub.add_peer("sala4", peer(id));
-
-        hub.set_muted("sala4", id, true);
-        let snapshot = hub.presence("sala4");
-        assert_eq!(snapshot.len(), 1);
-        assert!(snapshot[0].muted);
-    }
-
-    #[test]
-    fn salas_sao_isoladas_entre_si() {
-        let hub = Hub::new();
+    fn usuario_fica_em_um_canal_de_voz_so() {
+        let hub = hub_with("srv");
         let a = Uuid::new_v4();
-        hub.get_or_create("sala-a");
-        hub.get_or_create("sala-b");
-        hub.add_peer("sala-a", peer(a));
+        let b = Uuid::new_v4();
+        let eu = Uuid::new_v4();
 
-        assert!(hub.has_peer("sala-a", a));
-        assert!(!hub.has_peer("sala-b", a));
-        assert_eq!(hub.active_rooms(), 2);
+        hub.join_voice("srv", a, peer(eu), 6).unwrap();
+        let (_, saiu_de) = hub.join_voice("srv", b, peer(eu), 6).unwrap();
+
+        assert_eq!(
+            saiu_de,
+            Some(a),
+            "trocar de canal precisa avisar o anterior"
+        );
+        assert_eq!(hub.live_in("srv", a), 0, "presença órfã no canal antigo");
+        assert_eq!(hub.live_in("srv", b), 1);
+        assert_eq!(hub.voice_channel_of("srv", eu), Some(b));
+    }
+
+    #[test]
+    fn reconexao_no_mesmo_canal_nao_duplica_nem_estoura_o_cap() {
+        let hub = hub_with("srv");
+        let canal = Uuid::new_v4();
+        let eu = Uuid::new_v4();
+
+        // Cap 1 e o mesmo usuário entrando duas vezes: a segunda é reconexão,
+        // não gente nova — não pode ser barrada por si mesma.
+        hub.join_voice("srv", canal, peer(eu), 1).unwrap();
+        let (presenca, _) = hub
+            .join_voice("srv", canal, peer(eu), 1)
+            .expect("reconexão do mesmo usuário não pode bater no cap");
+        assert_eq!(presenca.len(), 1);
+        assert_eq!(hub.live_in("srv", canal), 1);
+    }
+
+    #[test]
+    fn cap_por_canal_barra_o_proximo() {
+        let hub = hub_with("srv");
+        let canal = Uuid::new_v4();
+
+        for _ in 0..2 {
+            hub.join_voice("srv", canal, peer(Uuid::new_v4()), 2)
+                .unwrap();
+        }
+        let err = hub
+            .join_voice("srv", canal, peer(Uuid::new_v4()), 2)
+            .expect_err("terceiro tem que ser barrado");
+        assert_eq!(err, VoiceJoinError::ChannelFull { max: 2 });
+        assert_eq!(hub.live_in("srv", canal), 2);
+    }
+
+    #[test]
+    fn cap_e_por_canal_e_nao_por_servidor() {
+        let hub = hub_with("srv");
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+
+        hub.join_voice("srv", a, peer(Uuid::new_v4()), 1).unwrap();
+        // Canal B tem o próprio cap — encher o A não pode fechar o servidor.
+        hub.join_voice("srv", b, peer(Uuid::new_v4()), 1)
+            .expect("outro canal tem cap próprio");
+        assert_eq!(hub.live_in("srv", a), 1);
+        assert_eq!(hub.live_in("srv", b), 1);
+    }
+
+    #[test]
+    fn sair_do_canal_libera_vaga_e_some_do_snapshot() {
+        let hub = hub_with("srv");
+        let canal = Uuid::new_v4();
+        let eu = Uuid::new_v4();
+        let outro = Uuid::new_v4();
+
+        hub.join_voice("srv", canal, peer(eu), 6).unwrap();
+        hub.join_voice("srv", canal, peer(outro), 6).unwrap();
+
+        let (saiu, restantes) = hub.leave_voice("srv", eu).expect("estava no canal");
+        assert_eq!(saiu, canal);
+        assert_eq!(restantes.len(), 1);
+        assert_eq!(hub.voice_channel_of("srv", eu), None);
+
+        // Último saindo esvazia o canal e ele some do snapshot.
+        hub.leave_voice("srv", outro).unwrap();
+        assert_eq!(hub.live_in("srv", canal), 0);
+        assert!(hub.voice_snapshot("srv").is_empty());
+    }
+
+    #[test]
+    fn sair_sem_estar_em_canal_nenhum_nao_quebra() {
+        let hub = hub_with("srv");
+        assert!(hub.leave_voice("srv", Uuid::new_v4()).is_none());
+    }
+
+    #[test]
+    fn mute_reflete_na_presenca_e_diz_o_canal() {
+        let hub = hub_with("srv");
+        let canal = Uuid::new_v4();
+        let eu = Uuid::new_v4();
+        hub.join_voice("srv", canal, peer(eu), 6).unwrap();
+
+        assert_eq!(hub.set_muted("srv", eu, true), Some(canal));
+        assert!(hub.voice_presence("srv", canal)[0].muted);
+
+        // Quem não está em canal nenhum não tem o que mutar.
+        assert_eq!(hub.set_muted("srv", Uuid::new_v4(), true), None);
+    }
+
+    #[test]
+    fn same_voice_channel_so_e_verdade_dentro_do_mesmo_canal() {
+        let hub = hub_with("srv");
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        let dentro1 = Uuid::new_v4();
+        let dentro2 = Uuid::new_v4();
+        let noutro = Uuid::new_v4();
+        let fora = Uuid::new_v4();
+
+        hub.join_voice("srv", a, peer(dentro1), 6).unwrap();
+        hub.join_voice("srv", a, peer(dentro2), 6).unwrap();
+        hub.join_voice("srv", b, peer(noutro), 6).unwrap();
+
+        assert!(same_voice_channel(&hub, "srv", dentro1, dentro2));
+        assert!(
+            !same_voice_channel(&hub, "srv", dentro1, noutro),
+            "offer não pode cruzar canal"
+        );
+        assert!(
+            !same_voice_channel(&hub, "srv", dentro1, fora),
+            "offer não pode ir pra quem não está em call"
+        );
+        assert!(
+            !same_voice_channel(&hub, "srv", fora, fora),
+            "quem não está em canal nenhum não fala com ninguém"
+        );
+    }
+
+    #[test]
+    fn servidores_sao_isolados_entre_si() {
+        let hub = Hub::new();
+        hub.get_or_create("srv-a");
+        hub.get_or_create("srv-b");
+        let canal = Uuid::new_v4();
+        let eu = Uuid::new_v4();
+
+        hub.join_voice("srv-a", canal, peer(eu), 6).unwrap();
+
+        assert_eq!(hub.live_in("srv-a", canal), 1);
+        assert_eq!(hub.live_in("srv-b", canal), 0);
+        assert_eq!(hub.voice_channel_of("srv-b", eu), None);
+        assert_eq!(hub.active_servers(), 2);
+    }
+
+    #[test]
+    fn publish_em_servidor_sem_ninguem_e_no_op() {
+        let hub = Hub::new();
+        // Não pode criar entrada nem entrar em pânico só porque ninguém está lá.
+        hub.publish("nunca-conectado", Uuid::new_v4(), ServerMsg::Pong);
+        assert_eq!(hub.active_servers(), 0);
+    }
+
+    #[test]
+    fn snapshot_lista_todos_os_canais_com_gente() {
+        let hub = hub_with("srv");
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        hub.join_voice("srv", a, peer(Uuid::new_v4()), 6).unwrap();
+        hub.join_voice("srv", b, peer(Uuid::new_v4()), 6).unwrap();
+
+        let snap = hub.voice_snapshot("srv");
+        assert_eq!(snap.len(), 2);
+        assert_eq!(snap.iter().map(|c| c.peers.len()).sum::<usize>(), 2);
     }
 }
