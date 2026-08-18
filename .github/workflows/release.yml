@@ -186,67 +186,6 @@ jobs:
 
       # Publica esse bundle no VPS assim que esse runner específico termina —
       # sem esperar os outros. Cada plataforma fica online independentemente.
-      - name: Install SSH key
-        if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
-
-      - name: Trust VPS host key
-        if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
-        shell: bash
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-        run: |
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          # Cinco tentativas: o ssh-keyscan falha esporadicamente a partir dos
-          # runners, e no de Windows falhou mais. Uma falha aqui perde um build
-          # de 10 minutos que já tinha dado certo, e o release inteiro trava
-          # porque o latest.json exige as quatro plataformas.
-          for i in 1 2 3 4 5; do
-            if ssh-keyscan -T 20 -p 22 "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null \
-               && [ -s ~/.ssh/known_hosts ]; then
-              echo "host key obtida na tentativa $i"
-              exit 0
-            fi
-            echo "tentativa $i falhou"
-            sleep 5
-          done
-          echo "::error::ssh-keyscan não conseguiu a host key em 5 tentativas"
-          exit 1
-
-      - name: Upload esta plataforma → VPS + update symlinks
-        if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
-        shell: bash
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-        run: |
-          set -x
-          ls -la dist-release/
-          echo "--- testing ssh first ---"
-          ssh -o StrictHostKeyChecking=no -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST" "echo ssh-ok && whoami"
-          echo "--- uploading bundles ---"
-          # scp each file (no -O flag — not supported across all scp versions)
-          cd dist-release
-          for f in *; do
-            [ -f "$f" ] || continue
-            echo "uploading: $f"
-            scp -o StrictHostKeyChecking=no -o BatchMode=yes "$f" "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/"
-          done
-          # Caminho absoluto: este passo já fez "cd dist-release" acima, então
-          # o relativo não resolve mais.
-          # Os symlinks são refeitos UMA vez no job `release`, depois que todas
-          # as plataformas subiram. Fazer isso aqui punha os quatro runners
-          # escrevendo e executando o mesmo script ao mesmo tempo — o que deu
-          # "Text file busy" — e apontava os links pra um release incompleto.
-          ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" \
-            "chown -R www-data:www-data /var/www/boracall/downloads"
-
-  # ---------------------------------------------------------------------------
-  # Release: gera SHA256SUMS global + cria GH Release draft (best-effort)
-  # Roda depois de TODOS os builds terminarem (sucesso OU falha) pra o que
-  # estiver disponível entrar no release.
   # ---------------------------------------------------------------------------
   release:
     needs: build
@@ -273,28 +212,78 @@ jobs:
           echo "== bundles finais =="
           ls -lah out/
 
-      # SHA256SUMS atualizado no VPS com TODOS os bundles já publicados
-      # (por qualquer plataforma que tenha finalizado, parcial OK).
       - name: Install SSH key
         if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
 
-      # Uma vez só, depois que os quatro builds subiram: aponta os nomes
-      # estáveis que a landing linka pros arquivos da versão nova.
+      - name: Trust VPS host key
+        if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          for i in 1 2 3 4 5; do
+            if ssh-keyscan -T 20 -p 22 "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null \
+               && [ -s ~/.ssh/known_hosts ]; then
+              echo "host key obtida na tentativa $i"
+              exit 0
+            fi
+            echo "tentativa $i falhou"
+            sleep 5
+          done
+          echo "::error::ssh-keyscan não conseguiu a host key em 5 tentativas"
+          exit 1
+
+      # Todo o envio pro VPS acontece aqui, no runner Linux — não mais em cada
+      # job de build.
+      #
+      # Motivo: o runner de Windows não alcança a porta 22 do VPS (cinco
+      # tentativas de ssh-keyscan estourando 20s cada, com o VPS sem fail2ban,
+      # sem regra de iptables e sem nenhuma conexão recusada no log). É restrição
+      # de saída do lado do GitHub, e insistir só queimava um build de 10 minutos
+      # que tinha dado certo.
+      #
+      # De quebra, o release deixa de publicar aos pedaços: antes cada
+      # plataforma subia assim que terminava, então durante alguns minutos o
+      # diretório misturava versão nova e antiga.
+      - name: Enviar bundles → VPS
+        if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -x
+          mkdir -p envio
+          # Instaladores (já achatados em out/ pelo passo anterior) …
+          cp out/* envio/ 2>/dev/null || true
+          rm -f envio/SHA256SUMS
+          # … e os artefatos do updater, que mantêm o prefixo da plataforma.
+          find artifacts -type f \( \
+            -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' -o \
+            -name '*.AppImage.tar.gz' -o -name '*.AppImage.tar.gz.sig' -o \
+            -name '*.nsis.zip' -o -name '*.nsis.zip.sig' -o \
+            -name '*.msi.zip' -o -name '*.msi.zip.sig' \) \
+            -exec cp -n {} envio/ \;
+
+          echo "== enviando =="; ls -lah envio/
+          for f in envio/*; do
+            [ -f "$f" ] || continue
+            scp -o StrictHostKeyChecking=no -o BatchMode=yes "$f" \
+              "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/"
+          done
+          ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" \
+            "chown -R www-data:www-data /var/www/boracall/downloads"
+
+      # Depois que TUDO subiu: aponta os nomes estáveis que a landing linka
+      # pros arquivos da versão nova.
       - name: Atualizar symlinks de download
         if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          for i in 1 2 3 4 5; do
-            ssh-keyscan -T 20 -p 22 "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null \
-              && [ -s ~/.ssh/known_hosts ] && break
-            sleep 5
-          done
           # Escreve num temporário e move: sobrescrever o arquivo em uso dá
           # "Text file busy", e o mv é atômico.
           scp -o StrictHostKeyChecking=no scripts/update-symlinks.sh \
