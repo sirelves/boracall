@@ -11,6 +11,7 @@ mod email;
 mod error;
 mod handlers;
 mod otp;
+mod ratelimit;
 mod signaling;
 mod slug;
 mod state;
@@ -47,6 +48,31 @@ async fn main() -> anyhow::Result<()> {
     let otp = otp::OtpStore::new();
     let mailer = email::Mailer::new(cfg.resend_api_key.clone(), cfg.email_from.clone());
 
+    // Limites. Os números vêm do config pra dar pra afrouxar em produção sem
+    // recompilar — mas o default já é o que faz sentido.
+    let limite_ip = ratelimit::RateLimiter::new(ratelimit::Politica::new(
+        cfg.rl_auth_burst,
+        Duration::from_secs(cfg.rl_auth_janela_secs),
+    ));
+    let limite_email = ratelimit::RateLimiter::new(ratelimit::Politica::new(
+        cfg.rl_email_burst,
+        Duration::from_secs(cfg.rl_email_janela_secs),
+    ));
+
+    // Sem isso o mapa de baldes guarda uma entrada por IP que já passou por
+    // aqui, pra sempre.
+    {
+        let (a, b) = (limite_ip.clone(), limite_email.clone());
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(300));
+            loop {
+                tick.tick().await;
+                a.limpar();
+                b.limpar();
+            }
+        });
+    }
+
     let state = AppState {
         db: pool,
         hub,
@@ -58,25 +84,39 @@ async fn main() -> anyhow::Result<()> {
         turn_urls: cfg.turn_urls.clone(),
         turn_secret: cfg.turn_secret.clone().map(Arc::new),
         turn_ttl_secs: cfg.turn_ttl_secs,
+        limite_ip,
+        limite_email,
         max_peers_per_channel: cfg.max_peers_per_channel,
     };
 
     // ----------------------- routes -----------------------
+    // Rotas de autenticação: limitadas por IP. É onde mora força bruta de senha,
+    // criação em massa de conta e chute de código OTP.
+    //
+    // /auth/me fica de fora: é leitura da própria sessão, chamada no boot do app
+    // e a cada troca de tela, e limitar isso só quebraria uso legítimo.
+    let auth = Router::new()
+        .route("/signup", post(handlers::auth::signup))
+        .route("/login", post(handlers::auth::login))
+        .route("/request-otp", post(handlers::auth::request_otp))
+        .route("/verify-otp", post(handlers::auth::verify_otp))
+        .route(
+            "/request-password-reset",
+            post(handlers::auth::request_password_reset),
+        )
+        .route("/reset-password", post(handlers::auth::reset_password))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            ratelimit::por_ip,
+        ));
+
     let api = Router::new()
         // system
         .route("/health", get(handlers::system::health))
         .route("/version", get(handlers::system::version))
         .route("/stats", get(handlers::system::stats))
         // auth
-        .route("/auth/signup", post(handlers::auth::signup))
-        .route("/auth/login", post(handlers::auth::login))
-        .route("/auth/request-otp", post(handlers::auth::request_otp))
-        .route("/auth/verify-otp", post(handlers::auth::verify_otp))
-        .route(
-            "/auth/request-password-reset",
-            post(handlers::auth::request_password_reset),
-        )
-        .route("/auth/reset-password", post(handlers::auth::reset_password))
+        .nest("/auth", auth)
         .route("/auth/me", get(handlers::auth::me))
         .route("/auth/me", patch(handlers::auth::update_me))
         // servers + channels

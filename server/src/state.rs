@@ -2,6 +2,7 @@
 
 use crate::email::Mailer;
 use crate::otp::OtpStore;
+use crate::ratelimit::RateLimiter;
 use crate::signaling::Hub;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -18,5 +19,9 @@ pub struct AppState {
     pub turn_urls: Vec<String>,
     pub turn_secret: Option<Arc<String>>,
     pub turn_ttl_secs: i64,
+    /// Limite por IP nas rotas de autenticação.
+    pub limite_ip: RateLimiter,
+    /// Limite por e-mail de destino nas rotas que disparam mensagem.
+    pub limite_email: RateLimiter,
     pub max_peers_per_channel: usize,
 }

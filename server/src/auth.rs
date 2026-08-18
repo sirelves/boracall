@@ -136,6 +136,14 @@ mod tests {
             turn_urls: Vec::new(),
             turn_secret: None,
             turn_ttl_secs: 3600,
+            limite_ip: crate::ratelimit::RateLimiter::new(crate::ratelimit::Politica::new(
+                1000,
+                std::time::Duration::from_secs(60),
+            )),
+            limite_email: crate::ratelimit::RateLimiter::new(crate::ratelimit::Politica::new(
+                1000,
+                std::time::Duration::from_secs(60),
+            )),
             max_peers_per_channel: 6,
         }
     }
