@@ -74,7 +74,21 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          ssh-keyscan -T 20 -p 22 "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          # O ssh-keyscan falha de vez em quando a partir dos runners do GitHub
+          # (o landing.yml já tinha tratamento pra isso, e este workflow nasceu
+          # sem). Uma falha aqui derruba um deploy que estava perfeito, então
+          # tenta algumas vezes antes de desistir.
+          for i in 1 2 3 4 5; do
+            if ssh-keyscan -T 20 -p 22 "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null \
+               && [ -s ~/.ssh/known_hosts ]; then
+              echo "host key obtida na tentativa $i"
+              exit 0
+            fi
+            echo "tentativa $i falhou"
+            sleep 5
+          done
+          echo "::error::ssh-keyscan não conseguiu a host key de $DEPLOY_HOST em 5 tentativas"
+          exit 1
 
       - name: Backup do banco
         if: ${{ !inputs.skip_backup }}
