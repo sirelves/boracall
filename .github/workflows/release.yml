@@ -199,7 +199,21 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          ssh-keyscan -T 20 -p 22 "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          # Cinco tentativas: o ssh-keyscan falha esporadicamente a partir dos
+          # runners, e no de Windows falhou mais. Uma falha aqui perde um build
+          # de 10 minutos que já tinha dado certo, e o release inteiro trava
+          # porque o latest.json exige as quatro plataformas.
+          for i in 1 2 3 4 5; do
+            if ssh-keyscan -T 20 -p 22 "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null \
+               && [ -s ~/.ssh/known_hosts ]; then
+              echo "host key obtida na tentativa $i"
+              exit 0
+            fi
+            echo "tentativa $i falhou"
+            sleep 5
+          done
+          echo "::error::ssh-keyscan não conseguiu a host key em 5 tentativas"
+          exit 1
 
       - name: Upload esta plataforma → VPS + update symlinks
         if: ${{ inputs.skip_deploy != true && vars.DEPLOY_ENABLED == 'true' }}
