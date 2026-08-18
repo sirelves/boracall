@@ -14,5 +14,5 @@ pub struct AppState {
     pub jwt_ttl_days: i64,
     pub otp: OtpStore,
     pub mailer: Mailer,
-    pub max_peers_per_room: usize,
+    pub max_peers_per_channel: usize,
 }

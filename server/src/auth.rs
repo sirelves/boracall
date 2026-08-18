@@ -132,7 +132,7 @@ mod tests {
             jwt_ttl_days: ttl_days,
             otp: OtpStore::new(),
             mailer: Mailer::new(None, None),
-            max_peers_per_room: 6,
+            max_peers_per_channel: 6,
         }
     }
 

@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT s.id, (m.user_id IS NOT NULL) AS \"is_member!\"\n        FROM servers s\n        LEFT JOIN server_members m ON m.server_id = s.id AND m.user_id = $2\n        WHERE s.slug = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "is_member!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "6aea492ceb6ba0fabab8261e14779f349f5eb384eb05f47ba5d7d4fcae5e9511"
+}

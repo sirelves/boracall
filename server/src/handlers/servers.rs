@@ -125,9 +125,9 @@ async fn require_member(state: &AppState, server_id: Uuid, user_id: Uuid) -> App
 }
 
 /// Canal de voz reporta presença ao vivo; canal de texto sempre 0.
-fn live_count(state: &AppState, kind: &str, slug: &str) -> usize {
+fn live_count(state: &AppState, server_slug: &str, kind: &str, channel_id: Uuid) -> usize {
     if kind == "voice" {
-        state.hub.slug_count(slug)
+        state.hub.live_in(server_slug, channel_id)
     } else {
         0
     }
@@ -324,6 +324,7 @@ pub async fn get_server(
     .fetch_all(&state.db)
     .await?;
 
+    let server_slug = server.slug.clone();
     Ok(Json(ServerDetail {
         server: ServerSummary {
             id: server.id,
@@ -337,7 +338,7 @@ pub async fn get_server(
         channels: channels
             .into_iter()
             .map(|c| ChannelDto {
-                live: live_count(&state, &c.kind, &c.slug),
+                live: live_count(&state, &server_slug, &c.kind, c.id),
                 unread: c.unread,
                 id: c.id,
                 slug: c.slug,
@@ -511,7 +512,7 @@ pub async fn get_channel(
 
     Ok(Json(ChannelResolved {
         channel: ChannelDto {
-            live: live_count(&state, &row.kind, &row.slug),
+            live: live_count(&state, &row.server_slug, &row.kind, row.id),
             unread: 0,
             id: row.id,
             slug: row.slug,
@@ -562,7 +563,7 @@ pub(crate) mod tests {
             jwt_ttl_days: 30,
             otp: OtpStore::new(),
             mailer: Mailer::new(None, None),
-            max_peers_per_room: 6,
+            max_peers_per_channel: 6,
         }
     }
 

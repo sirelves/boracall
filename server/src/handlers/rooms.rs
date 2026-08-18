@@ -86,7 +86,7 @@ pub async fn list_rooms(
     let result = rows
         .into_iter()
         .map(|r| {
-            let live = state.hub.slug_count(&r.slug) as u32;
+            let live = 0u32; // legado: o hub acompanha canal de voz, não sala
             RoomSummary {
                 id: r.id,
                 slug: r.slug.clone(),
@@ -189,7 +189,7 @@ pub async fn get_room(
     .await?
     .ok_or(AppError::NotFound)?;
 
-    let live = state.hub.slug_count(&r.slug) as u32;
+    let live = 0u32; // legado: o hub acompanha canal de voz, não sala
     Ok(Json(RoomSummary {
         id: r.id,
         slug: r.slug,
@@ -242,7 +242,7 @@ pub async fn join_room(
     .execute(&state.db)
     .await?;
 
-    let live = state.hub.slug_count(&r.slug) as u32;
+    let live = 0u32; // legado: o hub acompanha canal de voz, não sala
     Ok(Json(RoomSummary {
         id: r.id,
         slug: r.slug,
