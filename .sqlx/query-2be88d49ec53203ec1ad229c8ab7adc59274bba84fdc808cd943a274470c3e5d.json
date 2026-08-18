@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO message_reads (channel_id, user_id, last_read_message_id, last_read_at)\n        VALUES ($1, $2, $3, COALESCE($4, NOW()))\n        ON CONFLICT (channel_id, user_id) DO UPDATE\n            SET last_read_message_id = CASE\n                    WHEN EXCLUDED.last_read_at > message_reads.last_read_at\n                    THEN EXCLUDED.last_read_message_id\n                    ELSE message_reads.last_read_message_id\n                END,\n                last_read_at = GREATEST(message_reads.last_read_at, EXCLUDED.last_read_at)\n        RETURNING last_read_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "last_read_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2be88d49ec53203ec1ad229c8ab7adc59274bba84fdc808cd943a274470c3e5d"
+}

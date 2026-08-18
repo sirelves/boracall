@@ -17,7 +17,7 @@ mod state;
 
 use axum::{
     http::StatusCode,
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post, put},
     Router,
 };
 use std::sync::Arc;
@@ -85,6 +85,18 @@ async fn main() -> anyhow::Result<()> {
             post(handlers::servers::create_channel),
         )
         .route("/channels/{slug}", get(handlers::servers::get_channel))
+        // mensagens
+        .route(
+            "/channels/{slug}/messages",
+            get(handlers::messages::list_messages),
+        )
+        .route(
+            "/channels/{slug}/messages",
+            post(handlers::messages::send_message),
+        )
+        .route("/channels/{slug}/read", put(handlers::messages::mark_read))
+        .route("/messages/{id}", patch(handlers::messages::edit_message))
+        .route("/messages/{id}", delete(handlers::messages::delete_message))
         // rooms (legado — sai quando o front migrar pro modelo de canais)
         .route("/rooms", get(handlers::rooms::list_rooms))
         .route("/rooms", post(handlers::rooms::create_room))

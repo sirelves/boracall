@@ -37,7 +37,7 @@ pub struct ServerSummary {
     pub member_count: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ChannelDto {
     pub id: Uuid,
     pub slug: String,
@@ -46,6 +46,8 @@ pub struct ChannelDto {
     pub position: f64,
     /// Quantas pessoas estão no canal de voz agora. Sempre 0 pra canal de texto.
     pub live: usize,
+    /// Mensagens não lidas por quem pediu. Sempre 0 pra canal de voz.
+    pub unread: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -206,6 +208,7 @@ pub async fn create_server(
                 kind: ch.kind,
                 position: ch.position,
                 live: 0,
+                unread: 0,
             });
         }
 
@@ -286,13 +289,24 @@ pub async fn get_server(
 
     let role = require_member(&state, server.id, auth.id).await?;
 
+    // O não-lido sai junto do detalhe do servidor porque é o que a sidebar
+    // precisa pra marcar o canal — pedir canal a canal seria N requisições.
+    // Mensagem própria nunca conta como não lida.
     let channels = sqlx::query!(
         r#"
-        SELECT id, slug, name, kind, position
-        FROM channels WHERE server_id = $1
-        ORDER BY kind, position, created_at
+        SELECT c.id, c.slug, c.name, c.kind, c.position,
+               (SELECT COUNT(*) FROM messages m
+                 WHERE m.channel_id = c.id
+                   AND m.user_id <> $2
+                   AND (r.last_read_at IS NULL OR m.created_at > r.last_read_at)
+               ) AS "unread!"
+        FROM channels c
+        LEFT JOIN message_reads r ON r.channel_id = c.id AND r.user_id = $2
+        WHERE c.server_id = $1
+        ORDER BY c.kind, c.position, c.created_at
         "#,
-        server.id
+        server.id,
+        auth.id
     )
     .fetch_all(&state.db)
     .await?;
@@ -324,6 +338,7 @@ pub async fn get_server(
             .into_iter()
             .map(|c| ChannelDto {
                 live: live_count(&state, &c.kind, &c.slug),
+                unread: c.unread,
                 id: c.id,
                 slug: c.slug,
                 name: c.name,
@@ -440,6 +455,7 @@ pub async fn create_channel(
                     kind: c.kind,
                     position: c.position,
                     live: 0,
+                    unread: 0,
                 }))
             }
             // Pode ser colisão de slug (retry resolve) ou nome repetido no mesmo
@@ -496,6 +512,7 @@ pub async fn get_channel(
     Ok(Json(ChannelResolved {
         channel: ChannelDto {
             live: live_count(&state, &row.kind, &row.slug),
+            unread: 0,
             id: row.id,
             slug: row.slug,
             name: row.name,
@@ -519,7 +536,7 @@ pub async fn get_channel(
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::email::Mailer;
     use crate::otp::OtpStore;
@@ -527,7 +544,7 @@ mod tests {
     use sqlx::postgres::PgPoolOptions;
     use std::sync::Arc;
 
-    async fn test_state() -> AppState {
+    pub(crate) async fn test_state() -> AppState {
         let url = std::env::var("DATABASE_URL").expect("DATABASE_URL pros testes de integração");
         let db = PgPoolOptions::new()
             .max_connections(4)
@@ -550,7 +567,7 @@ mod tests {
     }
 
     /// Usuário novo a cada chamada — isola os testes sem precisar truncar tabela.
-    async fn make_user(state: &AppState) -> AuthUser {
+    pub(crate) async fn make_user(state: &AppState) -> AuthUser {
         let email = format!("{}@teste.local", Uuid::new_v4());
         let id = sqlx::query_scalar!(
             "INSERT INTO users (email, password_hash) VALUES ($1, 'x') RETURNING id",
