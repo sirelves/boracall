@@ -20,14 +20,30 @@ backport para versões anteriores.
 
 ## O que já sabemos
 
-Estas são limitações conhecidas, com issue aberta. Relatar de novo não é
-necessário — mas contribuição para resolvê-las é bem-vinda:
+Algumas limitações conhecidas já têm issue aberta e estão sendo tratadas — as de
+**produto** ficam públicas (validade do JWT, assinatura de código dos
+instaladores). As de **infraestrutura** ficam em Security Advisory privado, não
+em issue.
 
-| o quê | issue |
+Se você acha que encontrou algo, relate: no pior caso já sabíamos e respondemos
+em um dia.
+
+## Regra: infraestrutura não vai para issue pública
+
+Este repositório é **público**. Descrever configuração de servidor — endereço,
+portas abertas, o que está ou não instalado, regras de firewall, nomes de outros
+serviços na mesma máquina — em issue ou PR é publicar um mapa para quem quiser
+atacar, mesmo quando a intenção é rastrear a correção.
+
+Vale tanto para quem relata quanto para quem mantém:
+
+| onde | o quê |
 |---|---|
-| JWT com validade de 30 dias, sem rotação nem revogação | [#14](https://github.com/sirelves/boracall/issues/14) |
-| Instaladores sem assinatura de código (Gatekeeper / SmartScreen) | [#15](https://github.com/sirelves/boracall/issues/15) |
-| Porta do Postgres do servidor aberta na internet | [#2](https://github.com/sirelves/boracall/issues/2) |
+| Issue pública | *"Endurecer o acesso ao banco de produção"* — o que precisa ser feito |
+| Advisory privado | endereço, porta, configuração atual, comando de correção, evidência |
+
+Se você é mantenedor e precisa registrar um achado de infraestrutura: abra o
+advisory primeiro, e deixe na issue apenas o título da tarefa com um ponteiro.
 
 ## Escopo
 
