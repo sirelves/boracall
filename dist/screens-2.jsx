@@ -41,6 +41,9 @@ function AppShell({ go, session, setSession, tweaks, setTweak }) {
   const [voicePeers, setVoicePeers] = useS2([]);
   const [muted, setMuted] = useS2(false);
   const [voiceErro, setVoiceErro] = useS2("");
+  // Segurando a tecla de falar. Só existe quando micMode === "ptt".
+  const [transmitindo, setTransmitindo] = useS2(false);
+  const [uiOculta, setUiOculta] = useS2(false);
 
   const rtRef = useR2(null);
   const meshRef = useR2(null);
@@ -166,8 +169,11 @@ function AppShell({ go, session, setSession, tweaks, setTweak }) {
     await mesh.start({ stream });
     rt.joinVoice(canal.id);
     setVoiceChannelId(canal.id);
-    setMuted(false);
-  }, [session.id, voiceChannelId]);
+    // Em "segurar pra falar", entra-se com o microfone FECHADO — abrir por
+    // padrão seria transmitir sem ninguém ter apertado nada.
+    setMuted(tweaks.micMode === "ptt");
+    setTransmitindo(false);
+  }, [session.id, voiceChannelId, tweaks.micMode]);
 
   const sairDaVoz = useC2(() => pararVoz(), []);
 
@@ -175,16 +181,82 @@ function AppShell({ go, session, setSession, tweaks, setTweak }) {
     if (meshRef.current) meshRef.current.setMuted(muted);
   }, [muted]);
 
-  // Atalho global de mute enquanto estiver em call.
+  // Atalhos de microfone, só enquanto estiver numa call.
+  //
+  // O guarda de INPUT/TEXTAREA importa mais aqui do que na versão anterior do
+  // app: agora existem canais de texto, e a tecla de falar é o espaço. Sem o
+  // guarda, escrever no chat sairia no ar.
   useE2(() => {
     if (!voiceChannelId) return;
-    const onKey = (e) => {
-      if (e.target && ["INPUT", "TEXTAREA"].includes(e.target.tagName)) return;
-      if (e.code === "KeyM") { setMuted((m) => !m); e.preventDefault(); }
+    const digitando = (e) =>
+      e.target && (["INPUT", "TEXTAREA"].includes(e.target.tagName) || e.target.isContentEditable);
+
+    const onDown = (e) => {
+      if (digitando(e)) return;
+      if (e.code === "KeyM" && tweaks.micMode !== "ptt") {
+        setMuted((m) => !m);
+        e.preventDefault();
+        return;
+      }
+      if (e.code === "Space" && tweaks.micMode === "ptt" && !e.repeat) {
+        setTransmitindo(true);
+        setMuted(false);
+        e.preventDefault(); // senão o espaço rola a página
+      }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [voiceChannelId]);
+    const onUp = (e) => {
+      if (e.code === "Space" && tweaks.micMode === "ptt") {
+        setTransmitindo(false);
+        setMuted(true);
+      }
+    };
+    // Perder o foco da janela com a tecla apertada não geraria keyup — sem
+    // isto o microfone ficaria aberto sem ninguém segurando nada.
+    const onBlur = () => {
+      if (tweaks.micMode === "ptt") { setTransmitindo(false); setMuted(true); }
+    };
+
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [voiceChannelId, tweaks.micMode]);
+
+  // Trocar pra "segurar pra falar" no meio da call fecha o microfone — senão
+  // ficaria aberto até alguém apertar e soltar a tecla.
+  useE2(() => {
+    if (!voiceChannelId) return;
+    if (tweaks.micMode === "ptt") { setMuted(true); setTransmitindo(false); }
+  }, [tweaks.micMode, voiceChannelId]);
+
+  // "Sempre no topo" também esconde a interface após alguns segundos parados,
+  // mas só quando o canal aberto é o de voz: apagar a tela de quem está lendo
+  // o chat seria hostil.
+  const ocioso = useR2(null);
+  useE2(() => {
+    const ativoEhVoz = canalAtivo?.kind === "voice";
+    if (!tweaks.invisible || !voiceChannelId || !ativoEhVoz) {
+      setUiOculta(false);
+      return;
+    }
+    const acordar = () => {
+      setUiOculta(false);
+      clearTimeout(ocioso.current);
+      ocioso.current = setTimeout(() => setUiOculta(true), 3500);
+    };
+    acordar();
+    window.addEventListener("mousemove", acordar);
+    window.addEventListener("keydown", acordar);
+    return () => {
+      window.removeEventListener("mousemove", acordar);
+      window.removeEventListener("keydown", acordar);
+      clearTimeout(ocioso.current);
+    };
+  }, [tweaks.invisible, voiceChannelId, canalAtivo]);
 
   // --- ações ---------------------------------------------------------------
   const criarServidor = async (nome) => {
@@ -243,7 +315,11 @@ function AppShell({ go, session, setSession, tweaks, setTweak }) {
   }
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell ${tweaks.density} ${uiOculta ? "fade" : ""}`}
+      style={uiOculta ? { opacity: 0.06, transition: "opacity 200ms linear" } : undefined}
+    >
+      {transmitindo && <div className="transmit">● TRANSMITINDO</div>}
       <ServerRail
         servers={servers}
         activeSlug={activeSlug}
@@ -274,8 +350,10 @@ function AppShell({ go, session, setSession, tweaks, setTweak }) {
             muted={muted}
             setMuted={setMuted}
             onSair={sairDaVoz}
-            session={session}
             erro={voiceErro}
+            micMode={tweaks.micMode}
+            transmitindo={transmitindo}
+            onTransmitir={(v) => { setTransmitindo(v); setMuted(!v); }}
           />
         )}
         {canalAtivo?.kind === "text" && (
@@ -648,7 +726,7 @@ function VoiceChannelPanel({ canal, emCall, peers, onEntrar, onSair, erro }) {
 }
 
 /// Barra fixa de call — fica visível mesmo navegando pra outro canal.
-function VoiceBar({ canal, peers, muted, setMuted, onSair, session, erro }) {
+function VoiceBar({ canal, peers, muted, setMuted, onSair, erro, micMode, transmitindo, onTransmitir }) {
   const falando = peers.filter((p) => !p.muted && p.level > 0.05).length;
   return (
     <div className="voz-bar">
@@ -660,9 +738,20 @@ function VoiceBar({ canal, peers, muted, setMuted, onSair, session, erro }) {
         </span>
       </div>
       {erro && <span className="form-error mono" style={{ padding: "2px 8px" }}>{erro}</span>}
-      <button className={`fbtn ${muted ? "fbtn-mute-on" : ""}`} onClick={() => setMuted(!muted)}>
-        {muted ? "Ativar mic" : "Silenciar"} <kbd>M</kbd>
-      </button>
+      {micMode === "ptt" ? (
+        <button
+          className={`fbtn fbtn-ptt ${transmitindo ? "ptt-active" : ""}`}
+          onMouseDown={() => onTransmitir(true)}
+          onMouseUp={() => onTransmitir(false)}
+          onMouseLeave={() => onTransmitir(false)}
+        >
+          <span className="dotmic" /> Segure pra falar <kbd>SPACE</kbd>
+        </button>
+      ) : (
+        <button className={`fbtn ${muted ? "fbtn-mute-on" : ""}`} onClick={() => setMuted(!muted)}>
+          {muted ? "Ativar mic" : "Silenciar"} <kbd>M</kbd>
+        </button>
+      )}
       <button className="fbtn fbtn-leave" onClick={onSair}>Sair</button>
     </div>
   );

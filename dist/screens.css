@@ -653,3 +653,23 @@
   height: 100vh;
   min-height: 0;
 }
+
+/* ==========================================================================
+   Densidade
+   ==========================================================================
+   Antes só existia uma regra (.compact .urow) e a classe nem era aplicada,
+   então a opção não tinha efeito nenhum. Agora aperta o que ocupa espaço de
+   verdade numa janela pequena: mensagem, canal e barra de voz. */
+
+.compact .msg              { padding: 1px 0; }
+.compact .msg-texto        { font-size: var(--fs-sm); line-height: 1.35; }
+.compact .msgs             { padding: var(--space-2); gap: 0; }
+.compact .canal            { padding: 3px var(--space-3, 12px); }
+.compact .grupo            { padding: var(--space-1) 0; }
+.compact .canais-head,
+.compact .chat-head        { padding: var(--space-2) var(--space-3, 12px); }
+.compact .composer         { padding: var(--space-2); }
+.compact .voz-bar          { padding: 2px var(--space-3, 12px); }
+.compact .urow             { padding: 6px 18px; }
+
+.comfy .msg-texto          { line-height: 1.5; }
