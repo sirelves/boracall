@@ -673,3 +673,13 @@
 .compact .urow             { padding: 6px 18px; }
 
 .comfy .msg-texto          { line-height: 1.5; }
+
+/* Configurações sobrepõem o app em vez de substituí-lo: trocar de microfone
+   não pode derrubar a chamada em andamento. */
+.config-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--bg);
+  overflow-y: auto;
+}

@@ -32,6 +32,10 @@ function AppShell({ go, session, setSession, tweaks, setTweak }) {
   const [activeChannelId, setActiveChannelId] = useS2(null);
   const [conn, setConn] = useS2("idle");             // idle | connecting | open | reconnecting | closed
   const [modal, setModal] = useS2(null);             // null | criar-servidor | criar-canal | convite | entrar
+  // Configurações é sobreposição, não rota: como rota, sair do app pra trocar
+  // o microfone desmontava o AppShell e DERRUBAVA a chamada em andamento —
+  // justo no momento em que se quer trocar de dispositivo.
+  const [config, setConfig] = useS2(false);
   const [erro, setErro] = useS2("");
   const [carregando, setCarregando] = useS2(true);
 
@@ -150,13 +154,21 @@ function AppShell({ go, session, setSession, tweaks, setTweak }) {
 
     let stream;
     try {
-      stream = await window.WebRTCMesh.acquireMic();
+      stream = await window.WebRTCMesh.acquireMic({
+        deviceId: tweaks.micEntrada,
+        echoCancellation: tweaks.cancelamentoEco,
+        noiseSuppression: tweaks.supressaoRuido,
+        autoGainControl: tweaks.ganhoAutomatico,
+      });
     } catch (e) {
       setVoiceErro("microfone bloqueado — libera nas preferências do sistema");
       return;
     }
 
-    const mesh = new window.WebRTCMesh.Mesh(rt, session.id, { channelId: canal.id });
+    const mesh = new window.WebRTCMesh.Mesh(rt, session.id, {
+      channelId: canal.id,
+      saidaId: tweaks.micSaida,
+    });
     meshRef.current = mesh;
     mesh.on("peers", (map) => {
       setVoicePeers([...map.entries()].map(([id, p]) => ({
@@ -173,7 +185,8 @@ function AppShell({ go, session, setSession, tweaks, setTweak }) {
     // padrão seria transmitir sem ninguém ter apertado nada.
     setMuted(tweaks.micMode === "ptt");
     setTransmitindo(false);
-  }, [session.id, voiceChannelId, tweaks.micMode]);
+  }, [session.id, voiceChannelId, tweaks.micMode, tweaks.micEntrada, tweaks.micSaida,
+      tweaks.cancelamentoEco, tweaks.supressaoRuido, tweaks.ganhoAutomatico]);
 
   const sairDaVoz = useC2(() => pararVoz(), []);
 
@@ -326,7 +339,7 @@ function AppShell({ go, session, setSession, tweaks, setTweak }) {
         onPick={setActiveSlug}
         onCriar={() => setModal("criar-servidor")}
         onEntrar={() => setModal("entrar")}
-        onSettings={() => go("settings")}
+        onSettings={() => setConfig(true)}
       />
 
       <ChannelList
@@ -378,6 +391,20 @@ function AppShell({ go, session, setSession, tweaks, setTweak }) {
         )}
         {!canalAtivo && <div className="empty" style={{margin:"auto"}}>nenhum canal selecionado</div>}
       </section>
+
+      {config && (
+        <div className="config-overlay">
+          <Settings
+            session={session}
+            setSession={setSession}
+            tweaks={tweaks}
+            setTweak={setTweak}
+            mesh={meshRef.current}
+            onFechar={() => setConfig(false)}
+            onSair={() => { setConfig(false); go("landing"); }}
+          />
+        </div>
+      )}
 
       {modal === "criar-servidor" && (
         <ModalSimples titulo="Novo servidor" rotulo="Nome do servidor"
@@ -922,7 +949,7 @@ function Convite({ detail, onFechar }) {
 // Configurações
 // ---------------------------------------------------------------------------
 
-function Settings({ go, session, setSession, tweaks, setTweak }) {
+function Settings({ session, setSession, tweaks, setTweak, mesh, onFechar, onSair }) {
   const [tab, setTab] = useS2("perfil");
   const [nome, setNome] = useS2(session.displayName || "");
   const [salvando, setSalvando] = useS2(false);
@@ -952,10 +979,10 @@ function Settings({ go, session, setSession, tweaks, setTweak }) {
           <span className="bn"><b>bora</b>call</span>
           <span className="room-crumb"><span className="slash">/</span>configurações</span>
         </div>
-        <button className="btn-ghost" onClick={() => go("app")}>← voltar</button>
+        <button className="btn-ghost" onClick={onFechar}>← voltar</button>
       </div>
       <div className="set-tabs">
-        {[["perfil", "perfil"], ["preferencias", "preferências"], ["conta", "conta"], ["sobre", "sobre"]].map(([k, l]) => (
+        {[["perfil", "perfil"], ["audio", "áudio"], ["preferencias", "preferências"], ["conta", "conta"], ["sobre", "sobre"]].map(([k, l]) => (
           <button key={k} className={`set-tab ${tab === k ? "on" : ""}`} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
@@ -982,6 +1009,7 @@ function Settings({ go, session, setSession, tweaks, setTweak }) {
             </div>
           </>
         )}
+        {tab === "audio" && <Audio tweaks={tweaks} setTweak={setTweak} mesh={mesh} />}
         {tab === "preferencias" && <TweaksPanel tweaks={tweaks} setTweak={setTweak} />}
         {tab === "sobre" && <Sobre />}
         {tab === "conta" && (
@@ -1000,13 +1028,144 @@ function Settings({ go, session, setSession, tweaks, setTweak }) {
                 try { window.api.logout(); } catch {}
                 try { localStorage.removeItem("bc_server"); } catch {}
                 setSession({ email: "", displayName: "", id: null });
-                go("landing");
+                onSair();
               }}>sair</button>
             </div>
           </>
         )}
       </div>
     </div>
+  );
+}
+
+/// Escolha de microfone, alto-falante e processamento de áudio.
+///
+/// A aba antiga mostrava "MacBook Pro Mic" e "AirPods Pro" fixos no código, com
+/// botões que não faziam nada. Foi removida por ser fachada; esta é a de verdade.
+function Audio({ tweaks, setTweak, mesh }) {
+  const [disp, setDisp] = useS2(null);
+  const [erro, setErro] = useS2("");
+  const [aplicando, setAplicando] = useS2(false);
+
+  const carregar = useC2(async () => {
+    try { setDisp(await window.WebRTCMesh.listarDispositivos()); }
+    catch (e) { setErro(e.message || "não deu pra listar os dispositivos"); }
+  }, []);
+
+  useE2(() => {
+    carregar();
+    // O sistema avisa quando um fone é conectado ou removido.
+    const md = navigator.mediaDevices;
+    if (!md || !md.addEventListener) return;
+    md.addEventListener("devicechange", carregar);
+    return () => md.removeEventListener("devicechange", carregar);
+  }, [carregar]);
+
+  const pedirPermissao = async () => {
+    setErro("");
+    try {
+      // Só depois de conceder é que os rótulos aparecem — antes disso a lista
+      // seria "dispositivo 1, dispositivo 2".
+      const s = await window.WebRTCMesh.acquireMic();
+      s.getTracks().forEach((t) => t.stop());
+      await carregar();
+    } catch (e) {
+      setErro("microfone bloqueado — libere nas preferências do sistema");
+    }
+  };
+
+  // Trocar no meio de uma chamada aplica na hora, sem derrubar a conexão.
+  const trocarEntrada = async (id) => {
+    setTweak("micEntrada", id);
+    if (!mesh) return;
+    setAplicando(true); setErro("");
+    try {
+      await mesh.setEntrada(id, {
+        echoCancellation: tweaks.cancelamentoEco,
+        noiseSuppression: tweaks.supressaoRuido,
+        autoGainControl: tweaks.ganhoAutomatico,
+      });
+    } catch (e) {
+      setErro("não deu pra usar esse microfone — voltando pro anterior");
+      setTweak("micEntrada", "default");
+    } finally { setAplicando(false); }
+  };
+
+  const trocarSaida = async (id) => {
+    setTweak("micSaida", id);
+    if (mesh) await mesh.setSaida(id);
+  };
+
+  const Select = ({ valor, opcoes, onChange, vazio }) => (
+    <select className="input" value={valor} onChange={(e) => onChange(e.target.value)}>
+      <option value="default">padrão do sistema</option>
+      {opcoes.map((o) => <option key={o.id} value={o.id}>{o.nome}</option>)}
+      {!opcoes.length && <option disabled>{vazio}</option>}
+    </select>
+  );
+
+  const Toggle = ({ chave, titulo, dica }) => (
+    <div className="set-row">
+      <div className="k">{titulo} <span className="d">{dica}</span></div>
+      <span className="dim mono">{tweaks[chave] ? "ativo" : "desligado"}</span>
+      <div className="seg">
+        <button className={`seg-btn ${!tweaks[chave] ? "seg-on" : ""}`}
+                onClick={() => setTweak(chave, false)}>off</button>
+        <button className={`seg-btn ${tweaks[chave] ? "seg-on" : ""}`}
+                onClick={() => setTweak(chave, true)}>on</button>
+      </div>
+    </div>
+  );
+
+  if (!disp) return <div className="empty">carregando dispositivos…</div>;
+
+  return (
+    <>
+      {disp.precisaPermissao && (
+        <div className="set-row">
+          <div className="k">Nomes dos dispositivos
+            <span className="d">o sistema só revela depois que você libera o microfone</span></div>
+          <span />
+          <button className="btn-line" onClick={pedirPermissao}>liberar microfone</button>
+        </div>
+      )}
+
+      <div className="set-row">
+        <div className="k">Microfone
+          <span className="d">{aplicando ? "aplicando…" : "trocar durante a chamada não derruba a conexão"}</span></div>
+        <Select valor={tweaks.micEntrada} opcoes={disp.entradas}
+                onChange={trocarEntrada} vazio="nenhum microfone encontrado" />
+        <span />
+      </div>
+
+      <div className="set-row">
+        <div className="k">Alto-falante
+          {disp.suportaSaida
+            ? <span className="d">para onde o áudio dos outros sai</span>
+            : <span className="d">este sistema não deixa o app escolher a saída — use o padrão do sistema</span>}
+        </div>
+        {disp.suportaSaida
+          ? <Select valor={tweaks.micSaida} opcoes={disp.saidas}
+                    onChange={trocarSaida} vazio="nenhuma saída encontrada" />
+          : <div className="mono dim">padrão do sistema</div>}
+        <span />
+      </div>
+
+      <div className="divider" style={{ margin: "10px 0" }} />
+
+      <Toggle chave="cancelamentoEco" titulo="Cancelamento de eco"
+              dica="evita que o som do alto-falante volte pelo microfone" />
+      <Toggle chave="supressaoRuido" titulo="Supressão de ruído"
+              dica="corta ventilador, teclado e fundo constante" />
+      <Toggle chave="ganhoAutomatico" titulo="Ganho automático"
+              dica="nivela o volume da sua voz" />
+
+      <div className="dim" style={{ fontSize: 12, marginTop: 10 }}>
+        O processamento vale a partir da próxima vez que você entrar num canal de voz.
+      </div>
+
+      {erro && <div className="form-error mono">{erro}</div>}
+    </>
   );
 }
 
@@ -1052,6 +1211,6 @@ function Sobre() {
 }
 
 Object.assign(window, {
-  AppShell, Sobre, ServerRail, ChannelList, TextChannel, Mensagem,
+  AppShell, Sobre, Audio, ServerRail, ChannelList, TextChannel, Mensagem,
   VoiceChannelPanel, VoiceBar, PrimeiroServidor, ModalSimples, CriarCanal, Convite, Settings,
 });
