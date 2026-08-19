@@ -174,9 +174,12 @@ function PingMeter({ ping, loss }) {
 
 // ---------- Tweaks panel ----------
 function TweaksPanel({ tweaks, setTweak, onClose }) {
-  const Row = ({ label, children }) => (
+  const Row = ({ label, hint, children }) => (
     <div className="tw-row">
-      <span className="tw-label mono dim">{label}</span>
+      <span className="tw-label mono dim">
+        {label}
+        {hint && <span className="tw-hint">{hint}</span>}
+      </span>
       <div>{children}</div>
     </div>
   );
@@ -203,20 +206,16 @@ function TweaksPanel({ tweaks, setTweak, onClose }) {
           ))}
         </div>
       </Row>
-      <Row label="Mic">
-        <Seg value={tweaks.micMode} options={[{v:"toggle",l:"toggle"},{v:"ptt",l:"ptt"}]} onChange={(v)=>setTweak("micMode",v)} />
-      </Row>
-      <Row label="UI invis.">
-        <Seg value={tweaks.invisible?"on":"off"} options={[{v:"off",l:"off"},{v:"on",l:"on"}]} onChange={(v)=>setTweak("invisible",v==="on")} />
+      <Row label="Microfone" hint="segurar = fala só enquanto a tecla estiver pressionada">
+        <Seg value={tweaks.micMode}
+             options={[{v:"toggle",l:"alternar"},{v:"ptt",l:"segurar"}]}
+             onChange={(v)=>setTweak("micMode",v)} />
       </Row>
       <Row label="Densidade">
         <Seg value={tweaks.density} options={[{v:"compact",l:"compacta"},{v:"comfy",l:"confort."}]} onChange={(v)=>setTweak("density",v)} />
       </Row>
-      <Row label="Device">
-        <Seg value={tweaks.device} options={[{v:"desktop",l:"desktop"},{v:"mobile",l:"mobile"}]} onChange={(v)=>setTweak("device",v)} />
-      </Row>
-      <Row label="Landing">
-        <Seg value={tweaks.landingVariant} options={[{v:"A",l:"A"},{v:"B",l:"B"},{v:"C",l:"C"}]} onChange={(v)=>setTweak("landingVariant",v)} />
+      <Row label="Sempre no topo" hint="mantém a janela sobre as outras, e some com a interface durante a call">
+        <Seg value={tweaks.invisible?"on":"off"} options={[{v:"off",l:"off"},{v:"on",l:"on"}]} onChange={(v)=>setTweak("invisible",v==="on")} />
       </Row>
     </div>
   );
