@@ -67,6 +67,26 @@ precisa apontar pra produção; o build de release reescreve esse arquivo sozinh
 
 ---
 
+## Coisas que vão te morder
+
+Anotadas porque cada uma já custou tempo de alguém:
+
+- **macOS bloqueia o app na primeira execução.** Os instaladores não são
+  assinados (issue #15). Clique direito → *Abrir*, ou `xattr -c BoraCall.app`.
+- **O webview guarda cache entre recargas.** Mudou JSX e não viu? Feche e abra o
+  app, ou use `npm run dev`.
+- **Permissão de microfone no macOS** só é pedida quando o `getUserMedia` roda.
+  Se você negou uma vez, precisa liberar em *Ajustes do Sistema → Privacidade →
+  Microfone* — o app não pergunta de novo.
+- **WebRTC no WKWebView** não tem todos os codecs. O que usamos (Opus 48 kHz)
+  funciona; se você for mexer em codec, teste nas três plataformas.
+- **`dist/env.js` aponta pro backend local.** Não mude achando que precisa
+  apontar pra produção: o build de release reescreve esse arquivo sozinho. Já
+  aconteceu de alguém rodar em desenvolvimento e mandar cadastro pro banco de
+  produção sem perceber.
+
+---
+
 ## Convenções
 
 ### Rust

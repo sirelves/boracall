@@ -23,7 +23,7 @@
 - 🖥 **Desktop nativo** via Tauri v2 com auto-updater ed25519-signed, `~8MB` de binário vs ~100MB do Electron
 - ⚙️ **CI/CD** com 4 runners paralelos gerando `.dmg` (ARM+Intel) / `.msi` / `.AppImage` / `.deb` / `.rpm`
 - 🎨 **Zero build step no frontend** — React 18 + Babel standalone via `<script>`, fontes vendoradas
-- 📚 **Documentação completa**: [README](https://github.com/<owner>/BoraCall) · [ARCHITECTURE.md](https://github.com/<owner>/BoraCall/blob/main/ARCHITECTURE.md) · [HANDOFF.md](https://github.com/<owner>/BoraCall/blob/main/HANDOFF.md) (deploy VPS)
+- 📚 **Documentação completa**: [README](https://github.com/<owner>/BoraCall) · [ARCHITECTURE.md](https://github.com/<owner>/BoraCall/blob/main/ARCHITECTURE.md)
 
 [→ Repositório](https://github.com/<owner>/BoraCall) · [→ Arquitetura](https://github.com/<owner>/BoraCall/blob/main/ARCHITECTURE.md) · [→ Landing](https://boracall.com)
 
