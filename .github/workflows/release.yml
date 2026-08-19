@@ -276,11 +276,31 @@ jobs:
             -exec cp -n {} envio/ \;
 
           echo "== enviando =="; ls -lah envio/
-          for f in envio/*; do
-            [ -f "$f" ] || continue
-            scp -o StrictHostKeyChecking=yes -o BatchMode=yes "$f" \
-              "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/"
+
+          # rsync, não scp em laço: o AppImage sozinho tem ~90 MB, e o servidor
+          # é compartilhado — um pico de carga de outro serviço já derrubou um
+          # upload no meio. Com --partial o que já subiu não é jogado fora, e a
+          # tentativa seguinte continua de onde parou.
+          #
+          # rsync só é possível porque o envio passou a sair do runner Linux;
+          # quando cada plataforma enviava a sua parte, o runner de Windows não
+          # tinha rsync.
+          enviou=0
+          for i in 1 2 3 4 5; do
+            if rsync -az --partial --timeout=120 \
+                 -e "ssh -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=15" \
+                 envio/ "$DEPLOY_USER@$DEPLOY_HOST:/var/www/boracall/downloads/"; then
+              echo "upload concluído na tentativa $i"
+              enviou=1
+              break
+            fi
+            echo "tentativa $i falhou; nova tentativa em ${i}0s"
+            sleep "${i}0"
           done
+          if [ "$enviou" -ne 1 ]; then
+            echo "::error::não foi possível enviar os bundles em 5 tentativas"
+            exit 1
+          fi
           ssh -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
             "chown -R www-data:www-data /var/www/boracall/downloads"
 
