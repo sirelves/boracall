@@ -19,14 +19,53 @@
     { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
   ];
 
-  async function acquireMic({ echoCancellation = true, noiseSuppression = true, autoGainControl = true } = {}) {
+  async function acquireMic({
+    deviceId,
+    echoCancellation = true,
+    noiseSuppression = true,
+    autoGainControl = true,
+  } = {}) {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       throw new Error("mic: getUserMedia not available");
     }
-    return navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation, noiseSuppression, autoGainControl },
-      video: false,
-    });
+    const audio = { echoCancellation, noiseSuppression, autoGainControl };
+    // `ideal` e não `exact`: se o dispositivo escolhido sumiu (headset
+    // desconectado), cai no padrão do sistema em vez de falhar a chamada
+    // inteira com OverconstrainedError.
+    if (deviceId && deviceId !== "default") audio.deviceId = { ideal: deviceId };
+    return navigator.mediaDevices.getUserMedia({ audio, video: false });
+  }
+
+  /// Dispositivos de áudio disponíveis, separados por direção.
+  ///
+  /// Os rótulos só chegam preenchidos DEPOIS que a permissão de microfone foi
+  /// concedida — antes disso o navegador devolve string vazia, e uma lista de
+  /// "dispositivo 1, dispositivo 2" não ajuda ninguém a escolher. Por isso o
+  /// retorno diz se ainda falta permissão, e quem chama decide o que mostrar.
+  async function listarDispositivos() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      return { entradas: [], saidas: [], precisaPermissao: false, suportaSaida: false };
+    }
+    const todos = await navigator.mediaDevices.enumerateDevices();
+    const audio = todos.filter((d) => d.kind === "audioinput" || d.kind === "audiooutput");
+    const semRotulo = audio.length > 0 && audio.every((d) => !d.label);
+
+    return {
+      entradas: todos.filter((d) => d.kind === "audioinput")
+        .map((d) => ({ id: d.deviceId, nome: d.label || "microfone sem nome" })),
+      saidas: todos.filter((d) => d.kind === "audiooutput")
+        .map((d) => ({ id: d.deviceId, nome: d.label || "saída sem nome" })),
+      precisaPermissao: semRotulo,
+      suportaSaida: suportaEscolhaDeSaida(),
+    };
+  }
+
+  /// Escolher o alto-falante depende de setSinkId, que nem todo webview tem —
+  /// o WebKitGTK do Linux é o caso mais provável de faltar. Sem isso, o áudio
+  /// sai pelo dispositivo padrão do sistema e não há o que fazer pelo app.
+  function suportaEscolhaDeSaida() {
+    return typeof HTMLMediaElement !== "undefined" &&
+      typeof HTMLMediaElement.prototype.setSinkId === "function";
   }
 
   function attachLevelMeter(stream, onLevel, intervalMs = 150) {
@@ -64,6 +103,9 @@
       // "relay" força todo o tráfego pelo TURN. Serve pra verificar que o relay
       // funciona de verdade e pra quem não quer expor o IP local aos pares.
       this.iceTransportPolicy = opts.iceTransportPolicy || "all";
+      // Alto-falante escolhido. Aplicado em cada elemento <audio> de par, e
+      // guardado porque par novo que entra depois também precisa dele.
+      this.saidaId = opts.saidaId || null;
       this.ice       = opts.iceServers || DEFAULT_ICE;
       this.localStream = null;
       this.peers     = new Map();   // userId -> { pc, stream?, displayName?, muted, el? }
@@ -159,6 +201,7 @@
           el.setAttribute("data-bc-peer", userId);
           document.body.appendChild(el);
           peer.el = el;
+          this._aplicarSaida(el);
         }
         el.srcObject = peer.stream;
         this._emit("track", { userId, stream: peer.stream });
@@ -243,6 +286,55 @@
     _onSpeaking(m) {
       this._emit("level", { userId: m.user_id, level: m.level });
     }
+    /// Direciona um elemento de áudio pro alto-falante escolhido.
+    _aplicarSaida(el) {
+      if (!this.saidaId || !suportaEscolhaDeSaida()) return;
+      // Falhar aqui não pode derrubar a chamada: no pior caso o áudio sai pelo
+      // dispositivo padrão, que é melhor que não sair.
+      el.setSinkId(this.saidaId).catch((e) =>
+        console.warn("saída de áudio: não deu pra aplicar —", e.message || e));
+    }
+
+    /// Troca o alto-falante de todos os pares, inclusive no meio da chamada.
+    async setSaida(deviceId) {
+      this.saidaId = deviceId || null;
+      if (!suportaEscolhaDeSaida()) return false;
+      for (const [, p] of this.peers) if (p.el) this._aplicarSaida(p.el);
+      return true;
+    }
+
+    /// Troca o microfone SEM derrubar as conexões.
+    ///
+    /// `replaceTrack` no sender troca a trilha dentro da sessão já negociada —
+    /// não há renegociação, ninguém "sai e entra" da chamada, e o outro lado
+    /// nem percebe. Derrubar e refazer a mesh a cada troca de dispositivo seria
+    /// visível pra todo mundo no canal.
+    async setEntrada(deviceId, opts = {}) {
+      const nova = await acquireMic({ deviceId, ...opts });
+      const trilha = nova.getAudioTracks()[0];
+      if (!trilha) throw new Error("dispositivo não entregou trilha de áudio");
+
+      // Preserva o estado de mudo: trocar de microfone não pode abrir o som de
+      // quem estava mudo.
+      const antiga = this.localStream && this.localStream.getAudioTracks()[0];
+      if (antiga) trilha.enabled = antiga.enabled;
+
+      for (const [, p] of this.peers) {
+        const sender = p.pc.getSenders().find((s) => s.track && s.track.kind === "audio");
+        if (sender) await sender.replaceTrack(trilha);
+      }
+
+      if (this._detachLocalLevel) this._detachLocalLevel();
+      if (this.localStream) this.localStream.getTracks().forEach((t) => t.stop());
+
+      this.localStream = nova;
+      this._detachLocalLevel = attachLevelMeter(nova, (lvl) => {
+        this._emit("local-level", lvl);
+        if (lvl > 0.06) this.rt.speaking(lvl);
+      });
+      return nova;
+    }
+
     async _createOffer(userId) {
       const peer = this._ensurePeer(userId);
       const offer = await peer.pc.createOffer();
@@ -255,5 +347,7 @@
     Mesh,
     acquireMic,
     attachLevelMeter,
+    listarDispositivos,
+    suportaEscolhaDeSaida,
   };
 })();

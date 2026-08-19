@@ -7,6 +7,11 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "invisible": false,
   "density": "comfy",
   "accent": "amber",
+  "micEntrada": "default",
+  "micSaida": "default",
+  "supressaoRuido": true,
+  "cancelamentoEco": true,
+  "ganhoAutomatico": true,
   "device": "desktop",
   "landingVariant": "A"
 }/*EDITMODE-END*/;
@@ -179,8 +184,10 @@ function Router(p) {
     case "reset-password":  return <ResetPassword  go={p.go} session={p.session} setSession={p.setSession} />;
     case "otp":        return <OTP go={p.go} session={p.session} />;
     case "onboarding": return <Onboarding go={p.go} session={p.session} setSession={p.setSession} />;
+    // "settings" deixou de ser rota (virou sobreposição dentro do app, pra não
+    // derrubar a chamada). Quem tiver essa rota salva do uso anterior cai aqui.
+    case "settings":
     case "app":        return <AppShell go={p.go} session={p.session} setSession={p.setSession} tweaks={p.tweaks} setTweak={p.setTweak} />;
-    case "settings":   return <Settings go={p.go} session={p.session} setSession={p.setSession} tweaks={p.tweaks} setTweak={p.setTweak} />;
     default:           return <Landing go={p.go} variant="A" />;
   }
 }
